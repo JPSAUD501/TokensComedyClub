@@ -126,7 +126,7 @@ const server = Bun.serve({
   },
 });
 
-console.log(`\n🎮 Quipslop Web — http://localhost:${server.port}`);
+console.log(`\n🎮 Qwipslop Web — http://localhost:${server.port}`);
 console.log(`📡 WebSocket — ws://localhost:${server.port}/ws`);
 console.log(`🎯 ${runs} rounds with ${MODELS.length} models\n`);
 

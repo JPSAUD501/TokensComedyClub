@@ -191,7 +191,7 @@ function App() {
 
   return (
     <div className="app">
-      <a href="/" className="main-logo">QUIPSLOP</a>
+      <a href="/" className="main-logo">QWIPSLOP</a>
       <main className="main">
         <div className="page-header">
           <div className="page-title">Past Rounds</div>

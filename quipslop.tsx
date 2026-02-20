@@ -272,7 +272,7 @@ log("INFO", "startup", `Game starting: ${runs} rounds`, {
 });
 
 console.log(
-  `\n\x1b[1m\x1b[45m\x1b[30m QUIPSLOP \x1b[0m \x1b[2mAI vs AI comedy showdown — ${runs} rounds\x1b[0m`,
+  `\n\x1b[1m\x1b[45m\x1b[30m QWIPSLOP \x1b[0m \x1b[2m${runs} rounds\x1b[0m`,
 );
 console.log(
   `\x1b[2mModels: ${MODELS.map((m) => m.name).join(", ")}\x1b[0m\n`,

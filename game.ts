@@ -165,38 +165,25 @@ export function cleanResponse(text: string): string {
 
 // ── AI functions ────────────────────────────────────────────────────────────
 
-const PROMPT_SYSTEM = `You are a comedy writer for the game Quiplash. Generate a single funny fill-in-the-blank prompt that players will try to answer. The prompt should be surprising and designed to elicit hilarious responses. Return ONLY the prompt text, nothing else. Keep it short (under 15 words).
+import { ALL_PROMPTS } from "./prompts";
+
+function buildPromptSystem(): string {
+  const examples = shuffle([...ALL_PROMPTS]).slice(0, 80);
+  return `You are a comedy writer for the game Quiplash. Generate a single funny fill-in-the-blank prompt that players will try to answer. The prompt should be surprising and designed to elicit hilarious responses. Return ONLY the prompt text, nothing else. Keep it short (under 15 words).
 
 Use a wide VARIETY of prompt formats. Do NOT always use "The worst thing to..." — mix it up! Here are examples of the range of styles:
 
-- The worst thing to hear from your GPS
-- A terrible name for a dog
-- A rejected name for a new fast food restaurant
-- The worst thing to hear during surgery
-- A bad name for a superhero
-- A terrible name for a new perfume
-- The worst thing to find in your sandwich
-- A rejected slogan for a toothpaste brand
-- The worst thing to say during a job interview
-- A bad name for a country
-- The worst thing to say when meeting your partner's parents
-- A terrible name for a retirement home
-- A rejected title for a romantic comedy
-- The world's least popular ice cream flavor
-- A terrible fortune cookie message
-- What you don't want to hear from your dentist
-- The worst name for a band
-- A rejected Hallmark card message
-- Something you shouldn't yell in a library
-- The least intimidating martial arts move
+${examples.map((p) => `- ${p}`).join("\n")}
 
 Come up with something ORIGINAL — don't copy these examples.`;
+}
 
 export async function callGeneratePrompt(model: Model): Promise<string> {
   log("INFO", `prompt:${model.name}`, "Calling API", { modelId: model.id });
+  const system = buildPromptSystem();
   const { text, usage } = await generateText({
     model: openrouter.chat(model.id),
-    system: PROMPT_SYSTEM,
+    system,
     prompt:
       "Generate a single original Quiplash prompt. Be creative and don't repeat common patterns.",
   });

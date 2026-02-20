@@ -287,7 +287,7 @@ function Standings({ scores, activeRound }: { scores: Record<string, number>; ac
 function ConnectingScreen() {
   return (
     <div className="connecting">
-      <div className="connecting__logo"><img src="/assets/logo.svg" alt="Quipslop" /></div>
+      <div className="connecting__logo"><img src="/assets/logo.svg" alt="Qwipslop" /></div>
       <div className="connecting__sub">Connecting<Dots /></div>
     </div>
   );
@@ -341,7 +341,7 @@ function App() {
         <main className="main">
           <header className="header">
             <a href="/" className="logo">
-              <img src="/assets/logo.svg" alt="Quipslop" />
+              <img src="/assets/logo.svg" alt="Qwipslop" />
             </a>
           </header>
 
