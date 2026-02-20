@@ -112,12 +112,14 @@ function ContestantPanel({
   totalVotes,
   isWinner,
   showVotes,
+  voters,
 }: {
   task: TaskInfo;
   voteCount: number;
   totalVotes: number;
   isWinner: boolean;
   showVotes: boolean;
+  voters: VoteInfo[];
 }) {
   const color = getColor(task.model.name);
   const pct = totalVotes > 0 ? Math.round((voteCount / totalVotes) * 100) : 0;
@@ -144,13 +146,22 @@ function ContestantPanel({
       </div>
 
       {showVotes && (
-        <div className="contestant__votes">
-          <div className="vote-bar">
-            <div className="vote-bar__fill" style={{ width: `${pct}%`, background: color }} />
+        <div className="contestant__votes-container">
+          <div className="contestant__votes">
+            <div className="vote-bar">
+              <div className="vote-bar__fill" style={{ width: `${pct}%`, background: color }} />
+            </div>
+            <div className="vote-bar__label">
+              <span className="vote-bar__count" style={{ color }}>{voteCount}</span>
+              <span className="vote-bar__pct">{pct}%</span>
+            </div>
           </div>
-          <div className="vote-bar__label">
-            <span className="vote-bar__count" style={{ color }}>{voteCount}</span>
-            <span className="vote-bar__pct">{pct}%</span>
+          <div className="contestant__voters">
+            {voters.map((v, i) => (
+               <div key={i} className="voter-badge">
+                 <ModelName model={v.voter} showLogo={true} />
+               </div>
+            ))}
           </div>
         </div>
       )}
@@ -158,37 +169,16 @@ function ContestantPanel({
   );
 }
 
-function VoteTicker({ votes }: { votes: VoteInfo[] }) {
-  const finishedVotes = votes.filter((v) => v.finishedAt);
-  const pendingVotes = votes.filter((v) => !v.finishedAt);
-
+function PendingVotes({ votes }: { votes: VoteInfo[] }) {
+  if (votes.length === 0) return null;
   return (
-    <div className="vote-ticker">
-      <div className="vote-ticker__header">
-        <span className="vote-ticker__title">JUDGES</span>
-        <span className="vote-ticker__status">
-          {finishedVotes.length} / {votes.length}
-        </span>
-      </div>
-      <div className="vote-ticker__list">
-        {finishedVotes.map((vote, i) => (
-          <div key={`f-${i}`} className="vote-entry vote-entry--in">
-            <ModelName model={vote.voter} showLogo={false} />
-            <span className="vote-entry__arrow">→</span>
-            {vote.error || !vote.votedFor ? (
-              <span className="vote-entry__error">abstained</span>
-            ) : (
-              <ModelName model={vote.votedFor} showLogo={false} />
-            )}
-          </div>
-        ))}
-        {pendingVotes.map((vote, i) => (
-          <div key={`p-${i}`} className="vote-entry vote-entry--pending">
-            <ModelName model={vote.voter} showLogo={false} />
-            <span className="vote-entry__pending">deliberating…</span>
-          </div>
-        ))}
-      </div>
+    <div className="pending-votes">
+      {votes.map((v, i) => (
+        <div key={i} className={`voter-badge ${!v.finishedAt ? 'voter-badge--pending' : 'voter-badge--error'}`}>
+          <ModelName model={v.voter} showLogo={true} /> 
+          {!v.finishedAt ? " deliberating…" : " abstained"}
+        </div>
+      ))}
     </div>
   );
 }
@@ -205,6 +195,10 @@ function Arena({ round, total }: { round: RoundState; total: number }) {
     else if (v.votedFor?.name === contB.name) votesB++;
   }
   const totalVotes = votesA + votesB;
+  
+  const votersA = round.votes.filter(v => v.votedFor?.name === contA.name);
+  const votersB = round.votes.filter(v => v.votedFor?.name === contB.name);
+  const pendingOrAbstained = round.votes.filter(v => !v.finishedAt || v.error || !v.votedFor);
 
   const phaseLabel =
     round.phase === "prompting"
@@ -235,6 +229,7 @@ function Arena({ round, total }: { round: RoundState; total: number }) {
               totalVotes={totalVotes}
               isWinner={isDone && votesA > votesB}
               showVotes={showVotes}
+              voters={votersA}
             />
             <ContestantPanel
               task={round.answerTasks[1]}
@@ -242,10 +237,11 @@ function Arena({ round, total }: { round: RoundState; total: number }) {
               totalVotes={totalVotes}
               isWinner={isDone && votesB > votesA}
               showVotes={showVotes}
+              voters={votersB}
             />
           </div>
 
-          {showVotes && <VoteTicker votes={round.votes} />}
+          {showVotes && <PendingVotes votes={pendingOrAbstained} />}
 
           {isDone && votesA === votesB && (
             <div className="round-result">IT&rsquo;S A TIE!</div>
@@ -256,45 +252,23 @@ function Arena({ round, total }: { round: RoundState; total: number }) {
   );
 }
 
-function PastRoundEntry({ round }: { round: RoundState }) {
+function PastRoundMini({ round }: { round: RoundState }) {
   const [contA, contB] = round.contestants;
-  let votesA = 0,
-    votesB = 0;
+  let votesA = 0, votesB = 0;
   for (const v of round.votes) {
     if (v.votedFor?.name === contA.name) votesA++;
     else if (v.votedFor?.name === contB.name) votesB++;
   }
-
-  const isAWinner = votesA > votesB;
-  const isBWinner = votesB > votesA;
+  const winner = votesA > votesB ? contA : votesB > votesA ? contB : null;
 
   return (
-    <div className="past-round">
-      <div className="past-round__header">
-        <span className="past-round__num">R{round.num}</span>
-        <span className="past-round__prompt">{round.prompt}</span>
+    <div className="past-round-mini">
+      <div className="past-round-mini__top">
+        <span className="past-round-mini__num">R{round.num}</span>
+        <span className="past-round-mini__prompt">"{round.prompt}"</span>
       </div>
-      <div className="past-round__detail">
-        <div className={`past-round__competitor ${isAWinner ? 'past-round__competitor--winner' : ''}`}>
-          <div className="past-round__competitor-header">
-            <ModelName model={contA} />
-            <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-              <span className="past-round__score">{votesA}</span>
-              {isAWinner && <span className="past-round__winner-tag">WINNER</span>}
-            </div>
-          </div>
-          <span className="past-round__answer">&ldquo;{round.answerTasks[0].result}&rdquo;</span>
-        </div>
-        <div className={`past-round__competitor ${isBWinner ? 'past-round__competitor--winner' : ''}`}>
-          <div className="past-round__competitor-header">
-            <ModelName model={contB} />
-            <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-              <span className="past-round__score">{votesB}</span>
-              {isBWinner && <span className="past-round__winner-tag">WINNER</span>}
-            </div>
-          </div>
-          <span className="past-round__answer">&ldquo;{round.answerTasks[1].result}&rdquo;</span>
-        </div>
+      <div className="past-round-mini__winner">
+        {winner ? <><ModelName model={winner} showLogo={true} className="small-model-name" /> won</> : <span className="past-round-mini__tie">Tie</span>}
       </div>
     </div>
   );
@@ -321,7 +295,7 @@ function GameOver({ scores }: { scores: Record<string, number> }) {
   );
 }
 
-function Sidebar({ scores, activeRound }: { scores: Record<string, number>; activeRound: RoundState | null }) {
+function Sidebar({ scores, activeRound, completed }: { scores: Record<string, number>; activeRound: RoundState | null; completed: RoundState[] }) {
   const sorted = Object.entries(scores).sort((a, b) => b[1] - a[1]);
   const maxScore = sorted[0]?.[1] || 1;
 
@@ -333,44 +307,57 @@ function Sidebar({ scores, activeRound }: { scores: Record<string, number>; acti
 
   return (
     <aside className="sidebar">
-      <div className="sidebar__header">STANDINGS</div>
-      <div className="sidebar__list">
-        {sorted.map(([name, score], i) => {
-          const pct = maxScore > 0 ? Math.round((score / maxScore) * 100) : 0;
-          const color = getColor(name);
-          const isActive = competing.has(name);
-          const isJudging = judging.has(name);
-          const isPrompting = name === prompting;
+      <div className="sidebar__section">
+        <div className="sidebar__header">STANDINGS</div>
+        <div className="sidebar__list">
+          {sorted.map(([name, score], i) => {
+            const pct = maxScore > 0 ? Math.round((score / maxScore) * 100) : 0;
+            const color = getColor(name);
+            const isActive = competing.has(name);
+            const isJudging = judging.has(name);
+            const isPrompting = name === prompting;
 
-          let role = "";
-          if (isActive) role = "⚔️";
-          else if (isPrompting) role = "✍️";
-          else if (isJudging) role = "🗳️";
+            let role = "";
+            if (isActive) role = "⚔️";
+            else if (isPrompting) role = "✍️";
+            else if (isJudging) role = "🗳️";
 
-          return (
-            <div key={name} className={`standing ${isActive ? "standing--active" : ""}`}>
-              <div className="standing__rank">{i === 0 && score > 0 ? "👑" : `${i + 1}.`}</div>
-              <div className="standing__info">
-                <div className="standing__name-row">
-                  <ModelName model={{id: name, name}} />
-                  {role && <span className="standing__role">{role}</span>}
-                </div>
-                <div className="standing__bar-row">
-                  <div className="standing__bar">
-                    <div className="standing__bar-fill" style={{ width: `${pct}%`, background: color }} />
+            return (
+              <div key={name} className={`standing ${isActive ? "standing--active" : ""}`}>
+                <div className="standing__rank">{i === 0 && score > 0 ? "👑" : `${i + 1}.`}</div>
+                <div className="standing__info">
+                  <div className="standing__name-row">
+                    <ModelName model={{id: name, name}} />
+                    {role && <span className="standing__role">{role}</span>}
                   </div>
-                  <span className="standing__score">{score}</span>
+                  <div className="standing__bar-row">
+                    <div className="standing__bar">
+                      <div className="standing__bar-fill" style={{ width: `${pct}%`, background: color }} />
+                    </div>
+                    <span className="standing__score">{score}</span>
+                  </div>
                 </div>
               </div>
-            </div>
-          );
-        })}
+            );
+          })}
+        </div>
+        {activeRound && (
+          <div className="sidebar__legend">
+            <span>⚔️ COMPETING</span>
+            <span>✍️ PROMPTING</span>
+            <span>🗳️ JUDGING</span>
+          </div>
+        )}
       </div>
-      {activeRound && (
-        <div className="sidebar__legend">
-          <span>⚔️ COMPETING</span>
-          <span>✍️ PROMPTING</span>
-          <span>🗳️ JUDGING</span>
+
+      {completed.length > 0 && (
+        <div className="sidebar__section sidebar__section--history">
+          <div className="sidebar__header">PAST ROUNDS</div>
+          <div className="sidebar__history-list">
+            {[...completed].reverse().map(round => (
+              <PastRoundMini key={round.num} round={round} />
+            ))}
+          </div>
         </div>
       )}
     </aside>
@@ -422,14 +409,6 @@ function App() {
     };
   }, []);
 
-  useEffect(() => {
-    if (mainRef.current) {
-      // Don't auto-scroll aggressively if they are just reading past rounds
-      // but maybe scroll to top of arena when round changes?
-      // Leaving this simple for now.
-    }
-  }, [state?.active?.num]);
-
   if (!connected || !state) {
     return <ConnectingScreen />;
   }
@@ -458,18 +437,9 @@ function App() {
           )}
 
           {state.done && <GameOver scores={state.scores} />}
-
-          {state.completed.length > 0 && (
-            <div className="history">
-              <div className="history__title">PAST ROUNDS</div>
-              {[...state.completed].reverse().map((round) => (
-                <PastRoundEntry key={round.num} round={round} />
-              ))}
-            </div>
-          )}
         </main>
 
-        <Sidebar scores={state.scores} activeRound={state.active} />
+        <Sidebar scores={state.scores} activeRound={state.active} completed={state.completed} />
       </div>
     </div>
   );
