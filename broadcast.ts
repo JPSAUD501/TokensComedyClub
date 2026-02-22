@@ -234,26 +234,26 @@ function drawHeader() {
   ctx.fillStyle = "#0a0a0a";
   ctx.fillRect(0, 0, WIDTH, HEIGHT);
 
-  ctx.font = '700 32px "Inter", sans-serif';
+  ctx.font = '700 40px "Inter", sans-serif';
   ctx.fillStyle = "#ededed";
-  ctx.fillText("quipslop", 48, 72);
+  ctx.fillText("quipslop", 48, 76);
 
   const viewersText = `${viewerCount} viewer${viewerCount === 1 ? "" : "s"} watching`;
-  ctx.font = '600 14px "JetBrains Mono", monospace';
+  ctx.font = '600 18px "JetBrains Mono", monospace';
   ctx.fillStyle = "#888";
   const vWidth = ctx.measureText(viewersText).width;
-  
-  const pillW = vWidth + 40;
+
+  const pillW = vWidth + 44;
   const pillX = WIDTH - 380 - 48 - pillW;
-  roundRect(pillX, 44, pillW, 36, 18, "rgba(255,255,255,0.02)");
-  
+  roundRect(pillX, 44, pillW, 40, 20, "rgba(255,255,255,0.02)");
+
   ctx.fillStyle = connected ? "#22c55e" : "#ef4444";
   ctx.beginPath();
-  ctx.arc(pillX + 16, 62, 4, 0, Math.PI * 2);
+  ctx.arc(pillX + 18, 64, 5, 0, Math.PI * 2);
   ctx.fill();
 
   ctx.fillStyle = "#888";
-  ctx.fillText(viewersText, pillX + 28, 67);
+  ctx.fillText(viewersText, pillX + 32, 70);
 }
 
 function drawScoreboard(scores: Record<string, number>) {
@@ -263,43 +263,43 @@ function drawScoreboard(scores: Record<string, number>) {
   ctx.fillStyle = "#1c1c1c";
   ctx.fillRect(WIDTH - 380, 0, 1, HEIGHT);
 
-  ctx.font = '700 14px "JetBrains Mono", monospace';
+  ctx.font = '700 18px "JetBrains Mono", monospace';
   ctx.fillStyle = "#888";
-  ctx.fillText("STANDINGS", WIDTH - 340, 72);
+  ctx.fillText("STANDINGS", WIDTH - 348, 76);
 
   const maxScore = entries[0]?.[1] || 1;
 
   entries.slice(0, 10).forEach(([name, score], index) => {
-    const y = 140 + index * 60;
+    const y = 140 + index * 68;
     const color = getColor(name);
     const pct = maxScore > 0 ? (score / maxScore) : 0;
-    
-    ctx.font = '600 16px "JetBrains Mono", monospace';
+
+    ctx.font = '600 20px "JetBrains Mono", monospace';
     ctx.fillStyle = "#888";
     const rank = index === 0 && score > 0 ? "👑" : String(index + 1);
-    ctx.fillText(rank, WIDTH - 340, y + 20);
+    ctx.fillText(rank, WIDTH - 348, y + 24);
 
-    ctx.font = '600 16px "Inter", sans-serif';
+    ctx.font = '600 20px "Inter", sans-serif';
     ctx.fillStyle = color;
-    const nameText = name.length > 20 ? `${name.slice(0, 20)}...` : name;
-    
-    const drewLogo = drawModelLogo(name, WIDTH - 300, y + 4, 20);
+    const nameText = name.length > 18 ? `${name.slice(0, 18)}...` : name;
+
+    const drewLogo = drawModelLogo(name, WIDTH - 304, y + 6, 24);
     if (drewLogo) {
-      ctx.fillText(nameText, WIDTH - 300 + 28, y + 20);
+      ctx.fillText(nameText, WIDTH - 304 + 32, y + 24);
     } else {
-      ctx.fillText(nameText, WIDTH - 300, y + 20);
+      ctx.fillText(nameText, WIDTH - 304, y + 24);
     }
 
-    roundRect(WIDTH - 300, y + 36, 200, 4, 2, "#1c1c1c");
+    roundRect(WIDTH - 304, y + 42, 208, 4, 2, "#1c1c1c");
     if (pct > 0) {
-      roundRect(WIDTH - 300, y + 36, Math.max(8, 200 * pct), 4, 2, color);
+      roundRect(WIDTH - 304, y + 42, Math.max(8, 208 * pct), 4, 2, color);
     }
 
-    ctx.font = '700 16px "JetBrains Mono", monospace';
+    ctx.font = '700 20px "JetBrains Mono", monospace';
     ctx.fillStyle = "#888";
     const scoreText = String(score);
     const scoreWidth = ctx.measureText(scoreText).width;
-    ctx.fillText(scoreText, WIDTH - 48 - scoreWidth, y + 20);
+    ctx.fillText(scoreText, WIDTH - 48 - scoreWidth, y + 24);
   });
 }
 
@@ -316,26 +316,26 @@ function drawRound(round: RoundState) {
           : "Complete"
     ).toUpperCase();
 
-  ctx.font = '700 16px "JetBrains Mono", monospace';
+  ctx.font = '700 22px "JetBrains Mono", monospace';
   ctx.fillStyle = "#ededed";
   const totalText = totalRounds !== null ? `/${totalRounds}` : "";
   ctx.fillText(`Round ${round.num}${totalText}`, 64, 150);
-  
+
   ctx.fillStyle = "#888";
   const labelWidth = ctx.measureText(phaseLabel).width;
   ctx.fillText(phaseLabel, mainW - 64 - labelWidth, 150);
 
-  ctx.font = '600 14px "JetBrains Mono", monospace';
+  ctx.font = '600 18px "JetBrains Mono", monospace';
   ctx.fillStyle = "#888";
   const promptedText = "PROMPTED BY ";
   ctx.fillText(promptedText, 64, 210);
-  
+
   const pTw = ctx.measureText(promptedText).width;
   ctx.fillStyle = getColor(round.prompter.name);
-  const drewPLogo = drawModelLogo(round.prompter.name, 64 + pTw, 210 - 12, 16);
-  
+  const drewPLogo = drawModelLogo(round.prompter.name, 64 + pTw, 210 - 14, 20);
+
   if (drewPLogo) {
-    ctx.fillText(round.prompter.name.toUpperCase(), 64 + pTw + 20, 210);
+    ctx.fillText(round.prompter.name.toUpperCase(), 64 + pTw + 24, 210);
   } else {
     ctx.fillText(round.prompter.name.toUpperCase(), 64 + pTw, 210);
   }
@@ -344,8 +344,8 @@ function drawRound(round: RoundState) {
     round.prompt ??
     (round.phase === "prompting" ? "Generating prompt..." : "Prompt unavailable");
 
-  const promptFont = '400 48px "DM Serif Display", serif';
-  const promptLineHeight = 64;
+  const promptFont = '400 56px "DM Serif Display", serif';
+  const promptLineHeight = 72;
   const promptMaxLines = 4;
   const promptMaxWidth = mainW - 160;
   const promptLines = textLines(promptText, promptMaxWidth, promptFont, promptMaxLines);
@@ -405,22 +405,22 @@ function drawContestantCard(
     roundRect(x, y, w, h, 0, "rgba(255,255,255,0.03)");
   }
 
-  ctx.font = '700 24px "Inter", sans-serif';
+  ctx.font = '700 32px "Inter", sans-serif';
   ctx.fillStyle = color;
-  const drewCLogo = drawModelLogo(task.model.name, x + 24, y + 18, 24);
+  const drewCLogo = drawModelLogo(task.model.name, x + 24, y + 16, 32);
   if (drewCLogo) {
-    ctx.fillText(task.model.name, x + 56, y + 40);
+    ctx.fillText(task.model.name, x + 64, y + 44);
   } else {
-    ctx.fillText(task.model.name, x + 24, y + 40);
+    ctx.fillText(task.model.name, x + 24, y + 44);
   }
 
   if (isWinner) {
-    ctx.font = '700 12px "JetBrains Mono", monospace';
+    ctx.font = '700 18px "JetBrains Mono", monospace';
     ctx.fillStyle = "#0a0a0a";
     const winW = ctx.measureText("WIN").width;
-    roundRect(x + w - 24 - winW - 16, y + 20, winW + 16, 24, 4, "#ededed");
+    roundRect(x + w - 24 - winW - 24, y + 16, winW + 24, 36, 6, "#ededed");
     ctx.fillStyle = "#0a0a0a";
-    ctx.fillText("WIN", x + w - 24 - winW - 8, y + 36);
+    ctx.fillText("WIN", x + w - 24 - winW - 12, y + 40);
   }
 
   const answer =
@@ -433,10 +433,10 @@ function drawContestantCard(
   drawTextBlock(
     task.result ? `"${answer}"` : answer,
     x + 24,
-    y + 110,
+    y + 120,
     w - 48,
-    44,
-    '400 32px "DM Serif Display", serif',
+    52,
+    '400 40px "DM Serif Display", serif',
     isWinner ? "#ededed" : (!task.finishedAt && !task.result ? "#444" : "#888"),
     6,
   );
@@ -451,11 +451,11 @@ function drawContestantCard(
       roundRect(x + 24, y + h - 60, Math.max(8, ((w - 48) * pct) / 100), 4, 2, color);
     }
 
-    ctx.font = '700 20px "JetBrains Mono", monospace';
+    ctx.font = '700 28px "JetBrains Mono", monospace';
     ctx.fillStyle = color;
     ctx.fillText(String(voteCount), x + 24, y + h - 24);
-    
-    ctx.font = '600 14px "JetBrains Mono", monospace';
+
+    ctx.font = '600 20px "JetBrains Mono", monospace';
     ctx.fillStyle = "#444";
     const vTxt = `vote${voteCount === 1 ? "" : "s"}`;
     const vCountW = ctx.measureText(String(voteCount)).width;
@@ -463,8 +463,8 @@ function drawContestantCard(
     ctx.fillText(vTxt, x + 24 + vCountW + 8, y + h - 25);
 
     let avatarX = x + 24 + vCountW + 8 + vTxtW + 16;
-    const avatarY = y + h - 42;
-    const avatarSize = 24;
+    const avatarY = y + h - 48;
+    const avatarSize = 28;
 
     for (const v of taskVoters) {
       const vColor = getColor(v.voter.name);
@@ -485,15 +485,6 @@ function drawContestantCard(
       avatarX += avatarSize + 8;
     }
   }
-}
-
-function drawFooter() {
-  ctx.font = '600 12px "JetBrains Mono", monospace';
-  ctx.fillStyle = "#444";
-  const ageMs = Date.now() - lastMessageAt;
-  const freshness =
-    lastMessageAt === 0 ? "waiting for state" : `${Math.floor(ageMs / 1000)}s old`;
-  ctx.fillText(`viewers:${viewerCount}  updates:${freshness}`, 24, HEIGHT - 24);
 }
 
 function drawWaiting() {
@@ -533,8 +524,7 @@ function draw() {
   drawHeader();
   if (!state) {
     drawWaiting();
-    drawFooter();
-    return;
+      return;
   }
 
   drawScoreboard(state.scores);
@@ -550,7 +540,6 @@ function draw() {
   } else {
     drawWaiting();
   }
-  drawFooter();
 }
 
 function renderLoop() {
