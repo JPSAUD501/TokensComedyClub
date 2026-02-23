@@ -1,194 +1,93 @@
-# TokensComedyClub (Convex-Only)
+# Tokens Comedy Club 🤖🎭
 
-TokensComedyClub e um jogo de batalha de respostas entre modelos de IA com voto humano via chat.
-Todo o backend, banco e realtime rodam no Convex.
+Jogo de batalha de comédia entre modelos de IA com votação ao vivo do público.
 
-Sem SQLite, sem Postgres, sem WebSocket manual e sem Railway.
+Dois modelos de IA recebem o mesmo tema, geram respostas engraçadas e o público vota no melhor — tudo em tempo real via stream.
 
-## Arquitetura
+## Como funciona
 
-- `web`: app Vite (live, history, admin, broadcast canvas)
-- `convex`: engine do jogo, storage, realtime, HTTP actions admin e voto Fossabot
-- `stream-worker`: abre `/broadcast.html`, captura canvas e envia RTMP
+1. **Tema aleatório** é sorteado para cada rodada
+2. **Dois modelos** geram respostas simultaneamente (via OpenRouter)
+3. **Público vota** no chat (Twitch/YouTube) ou interface web
+4. **Placar atualizado** em tempo real
+5. **Histórico completo** de todas as batalhas
 
-## Requisitos
+## Stack
 
-- Bun 1.3+
-- Projeto Convex configurado
-- ffmpeg (para `stream-worker`)
-- chromium (para `stream-worker`)
+- **Frontend**: Vite + React + TypeScript
+- **Backend**: Convex (banco + realtime + HTTP actions)
+- **Streaming**: Puppeteer captura canvas → RTMP
+- **IA**: OpenRouter (múltiplos modelos)
 
-## Variaveis de ambiente
+## Páginas
 
-As envs configuraveis estao separadas por servico:
+| Página | URL | Descrição |
+|--------|-----|-----------|
+| Live | `/` | Acompanha a batalha atual em tempo real |
+| Histórico | `/history.html` | Todas as rodadas anteriores |
+| Admin | `/admin.html` | Controle de modelos, pausar/resumir, export |
+| Broadcast | `/broadcast.html` | Canvas otimizado para captura de stream |
 
-- `.env.web.example`
-- `.env.convex.example`
-- `.env.stream.example`
-
-### Web client
-
-- `VITE_CONVEX_URL` (obrigatoria)
-- `VITE_CONVEX_SITE_URL` (obrigatoria para `/admin/*`)
-
-### Convex backend
-
-- `OPENROUTER_API_KEY` (obrigatoria para o engine gerar prompt/resposta/voto IA)
-- `ADMIN_PASSCODE` (obrigatoria para `/admin/*`)
-- `ALLOWED_ORIGINS` (opcional, default `*`)
-- `FOSSABOT_VALIDATE_REQUESTS` (opcional, default `true`)
-
-### Integracoes de audiencia real
-
-- `TWITCH_CLIENT_ID` (obrigatoria se usar targets Twitch)
-- `TWITCH_CLIENT_SECRET` (obrigatoria se usar targets Twitch)
-- `YOUTUBE_API_KEY` (obrigatoria se usar targets YouTube)
-- `PLATFORM_VIEWER_POLL_INTERVAL_MS` (opcional, default `10000`)
-
-### Stream worker
-
-- `STREAM_RTMP_TARGET` (obrigatoria em modo live)
-- `BROADCAST_URL` (recomendado; no Coolify: `http://web:5109/broadcast.html`)
-
-## Setup local
-
-1. Instalar dependencias:
+## Rodando local
 
 ```bash
+# Instalar dependências
 bun install
-```
 
-2. Configurar envs:
-- web: copie de `.env.web.example`
-- convex: copie de `.env.convex.example`
-- stream-worker: copie de `.env.stream.example`
+# Configurar variáveis de ambiente (ver exemplos em .env.*.example)
+cp .env.web.example .env.web.local
+cp .env.convex.example .env.convex.local
 
-3. Rodar Convex:
-
-```bash
-bun run dev:convex
-```
-
-4. Rodar web:
-
-```bash
-bun run dev:web
-```
-
-Ou rodar os dois com Turbo:
-
-```bash
+# Rodar tudo (web + convex)
 bun run dev
 ```
 
-`bun run dev` usa o TUI do Turborepo no console (configurado em `turbo.json`).
+## Deploy (Coolify)
 
-## Paginas
-
-- `/index.html` live
-- `/history.html` historico
-- `/admin.html` admin
-- `/broadcast.html` canvas para stream
-
-## Admin HTTP Actions (Convex)
-
-- `POST /admin/login`
-- `GET /admin/status`
-- `GET /admin/models`
-- `POST /admin/models` (cria ou restaura arquivado)
-- `POST /admin/models/update` (edita modelo existente)
-- `POST /admin/models/enable`
-- `POST /admin/models/remove` (arquiva)
-- `POST /admin/models/restore` (desarquiva)
-- `GET /admin/viewer-targets`
-- `POST /admin/viewer-targets`
-- `POST /admin/viewer-targets/delete`
-- `POST /admin/pause`
-- `POST /admin/resume`
-- `POST /admin/reset`
-- `GET /admin/export`
-
-Auth: header `x-admin-passcode`.
-
-## Votacao da plateia (Fossabot)
-
-Votos humanos entram por:
-
-- `GET /fossabot/vote?vote=1`
-- `GET /fossabot/vote?vote=2`
-
-Regra: 1 voto por usuario por rodada, com troca permitida.
-
-Guia completo: `README.fossabot.md`
-
-## Contagem de espectadores e janela de voto
-
-Contagem exibida:
-
-- `web (live/history nao-ghost) + soma de todos os targets ativos Twitch/YouTube`
-- `/broadcast.html` nao envia heartbeat e nunca entra na contagem
-
-Regra da janela humana:
-
-- sem audiencia real: 120s
-- com audiencia real: 30s
-- se entrar audiencia durante janela longa, encurta imediatamente para 30s
-- se restar menos de 30s, mantem o tempo restante
-
-`?ghost=true` continua disponivel para live/history quando quiser abrir paginas sem contar presenca.
-
-## Stream worker
-
-Live:
-
-```bash
-bun run start:stream
-```
-
-Dry run local:
-
-```bash
-bun run start:stream:dryrun
-```
-
-### Musica de fundo
-
-Coloque faixas em `music/` com nome:
-
-- `bg_1.mp3`
-- `bg_2.mp3`
-- `bg_3.mp3`
-- `bg_4.mp3`
-
-Suporta mais faixas (`bg_5.mp3`, etc). O worker monta playlist aleatoria e toca em loop continuo.
-
-## Build
-
-```bash
-bun run build:web
-bun run preview:web
-```
-
-## Deploy (Coolify, 2 servicos)
-
-1. `web`
+**Serviço Web:**
 - Dockerfile: `Dockerfile`
 - Porta: `5109`
-- Env minima: `VITE_CONVEX_URL`, `VITE_CONVEX_SITE_URL`
+- Envs: `VITE_CONVEX_URL`, `VITE_CONVEX_SITE_URL`
 
-2. `stream-worker`
+**Serviço Stream:**
 - Dockerfile: `Dockerfile.stream`
-- Sem porta publica obrigatoria
-- Env minima: `BROADCAST_URL`, `STREAM_RTMP_TARGET`
-- Montar pasta `music/` com as faixas `bg_*.mp3`
+- Envs: `BROADCAST_URL`, `STREAM_RTMP_TARGET`
+- Monte a pasta `music/` com faixas `bg_*.mp3`
 
-## Scripts disponiveis
+## Variáveis de ambiente
 
-- `bun run dev:convex`
-- `bun run dev:web`
-- `bun run dev` (Turbo TUI: web + convex)
-- `bun run build:web`
-- `bun run preview:web`
-- `bun run start` (preview web)
-- `bun run start:stream`
-- `bun run start:stream:dryrun`
+| Variável | Obrigatória | Descrição |
+|----------|-------------|-----------|
+| `VITE_CONVEX_URL` | Sim | URL do projeto Convex |
+| `OPENROUTER_API_KEY` | Sim | API key para gerar respostas IA |
+| `ADMIN_PASSCODE` | Sim | Senha para acessar `/admin` |
+| `STREAM_RTMP_TARGET` | Stream | URL RTMP (ex: `rtmp://a.rtmp.youtube.com/live2/...`) |
+
+Veja os arquivos `.env.*.example` para a lista completa.
+
+## Votação do público
+
+Integração com chat via HTTP actions:
+
+```
+GET /fossabot/vote?vote=1  # Votar na resposta 1
+GET /fossabot/vote?vote=2  # Votar na resposta 2
+```
+
+Um voto por usuário por rodada (troca permitida).
+
+Guia completo: [`README.fossabot.md`](./README.fossabot.md)
+
+## Scripts úteis
+
+```bash
+bun run dev           # Dev com Turbo (web + convex)
+bun run dev:web       # Só frontend
+bun run dev:convex    # Só backend
+bun run build:web     # Build produção
+bun run start:stream  # Iniciar stream worker
+```
+
+## Licença
+
+MIT
