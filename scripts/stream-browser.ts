@@ -214,7 +214,7 @@ async function pipeReadableToSink(
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
-      if (value) sink.write(value);
+      sink.write(value);
     }
   } finally {
     sink.end();
@@ -262,9 +262,7 @@ async function main() {
     stdout: mode === "dryrun" ? "pipe" : "inherit",
     stderr: "pipe",
   });
-  if (ffmpeg.stderr) {
-    void pipeReadableToRedactedStderr(ffmpeg.stderr);
-  }
+  void pipeReadableToRedactedStderr(ffmpeg.stderr);
   let ffmpegWritable = true;
 
   let ffplay: Bun.Subprocess | null = null;

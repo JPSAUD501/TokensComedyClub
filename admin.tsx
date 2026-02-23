@@ -105,6 +105,7 @@ function App() {
   const [targetValue, setTargetValue] = useState("");
   const [targetEnabled, setTargetEnabled] = useState(true);
   const [editingTargetId, setEditingTargetId] = useState<string | null>(null);
+  const mountedRef = React.useRef<boolean>(true);
 
   async function loadViewerTargets(passcodeToUse: string) {
     const response = await requestAdminJson<ViewerTargetsResponse>(
@@ -115,35 +116,35 @@ function App() {
   }
 
   useEffect(() => {
-    let mounted = true;
+    mountedRef.current = true;
     const storedPasscode = readStoredPasscode();
     if (!storedPasscode) {
       setMode("locked");
       return () => {
-        mounted = false;
+        mountedRef.current = false;
       };
     }
 
     requestAdminJson<AdminResponse>("/admin/status", storedPasscode)
       .then(async (data) => {
-        if (!mounted) return;
+        if (!mountedRef.current) return;
         setSnapshot(data);
         setMode("ready");
         try {
           await loadViewerTargets(storedPasscode);
         } catch {
-          if (!mounted) return;
+          if (!mountedRef.current) return;
           setViewerTargets([]);
         }
       })
       .catch(() => {
-        if (!mounted) return;
+        if (!mountedRef.current) return;
         setSnapshot(null);
         setMode("locked");
       });
 
     return () => {
-      mounted = false;
+      mountedRef.current = false;
     };
   }, []);
 
