@@ -102,6 +102,8 @@ function parsePositiveInt(value: string | undefined, fallback: number): number {
 }
 
 function getClientIp(req: Request, server: Bun.Server<WsData>): string {
+  const realIp = req.headers.get("x-real-ip")?.trim();
+  if (realIp) return realIp;
   return server.requestIP(req)?.address ?? "unknown";
 }
 
