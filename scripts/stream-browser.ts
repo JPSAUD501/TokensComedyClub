@@ -242,6 +242,8 @@ async function main() {
       "--disable-background-timer-throttling",
       "--disable-renderer-backgrounding",
       "--disable-backgrounding-occluded-windows",
+      "--allow-running-insecure-content",
+      "--disable-features=LocalNetworkAccessChecks",
     ],
   });
 
