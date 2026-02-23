@@ -74,6 +74,14 @@ bun run dev:convex
 bun run dev:web
 ```
 
+Ou rodar os dois com Turbo:
+
+```bash
+bun run dev
+```
+
+`bun run dev` usa o TUI do Turborepo no console (configurado em `turbo.json`).
+
 ## Paginas
 
 - `/index.html` live
@@ -173,6 +181,7 @@ bun run preview:web
 
 - `bun run dev:convex`
 - `bun run dev:web`
+- `bun run dev` (Turbo TUI: web + convex)
 - `bun run build:web`
 - `bun run preview:web`
 - `bun run start` (preview web)

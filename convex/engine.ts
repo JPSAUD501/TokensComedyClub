@@ -48,8 +48,16 @@ export const createRound = internalMutation({
   handler: async (ctx, args) => {
     const state = await getOrCreateEngineState(ctx as any);
     if (state.generation !== args.expectedGeneration) return null;
-    if (state.activeRoundId) return null;
     if (state.done) return null;
+
+    if (state.activeRoundId) {
+      const activeRound = await ctx.db.get(state.activeRoundId);
+      if (activeRound) return null;
+      await ctx.db.patch(state._id, {
+        activeRoundId: undefined,
+        updatedAt: Date.now(),
+      });
+    }
 
     const now = Date.now();
     const num = state.nextRoundNum;
@@ -121,24 +129,14 @@ export const setPromptError = internalMutation({
     if (!state || !round) return false;
     if (state.generation !== args.expectedGeneration || round.generation !== args.expectedGeneration) return false;
 
-    await ctx.db.patch(args.roundId, {
-      phase: "done",
-      promptTask: {
-        ...round.promptTask,
-        finishedAt: Date.now(),
-        error: args.error,
-      },
-      completedAt: Date.now(),
-      updatedAt: Date.now(),
-    });
-
-    await ctx.db.patch(state._id, {
-      lastCompletedRoundId: args.roundId,
-      activeRoundId: undefined,
-      completedRounds: state.completedRounds + 1,
-      nextRoundNum: state.nextRoundNum + 1,
-      updatedAt: Date.now(),
-    });
+    const now = Date.now();
+    if (state.activeRoundId === args.roundId) {
+      await ctx.db.patch(state._id, {
+        activeRoundId: undefined,
+        updatedAt: now,
+      });
+    }
+    await ctx.db.delete(args.roundId);
 
     return true;
   },

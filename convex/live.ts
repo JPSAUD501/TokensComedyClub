@@ -94,10 +94,49 @@ export const getState = query({
 async function ensureStartedImpl(ctx: any) {
   const now = Date.now();
   const state = await getOrCreateEngineState(ctx as any);
+  const patch: Record<string, unknown> = {};
+
+  let hasValidActiveRound = false;
+  if (state.activeRoundId) {
+    const activeRound = await ctx.db.get(state.activeRoundId);
+    if (!activeRound) {
+      patch.activeRoundId = undefined;
+    } else {
+      hasValidActiveRound = true;
+    }
+  }
+
+  let hasValidLastCompletedRound = false;
+  if (state.lastCompletedRoundId) {
+    const lastCompleted = await ctx.db.get(state.lastCompletedRoundId);
+    if (!lastCompleted) {
+      patch.lastCompletedRoundId = undefined;
+    } else {
+      hasValidLastCompletedRound = true;
+    }
+  }
+
+  if (!hasValidActiveRound && !hasValidLastCompletedRound) {
+    const anyDoneRound = await ctx.db
+      .query("rounds")
+      .withIndex("by_generation_and_phase", (q: any) =>
+        q.eq("generation", state.generation).eq("phase", "done"),
+      )
+      .first();
+    if (!anyDoneRound && (state.completedRounds !== 0 || state.nextRoundNum !== 1)) {
+      patch.completedRounds = 0;
+      patch.nextRoundNum = 1;
+    }
+  }
+
   if (state.humanScores === undefined || state.humanVoteTotals === undefined) {
+    patch.humanScores = normalizeScoreRecord(state.humanScores);
+    patch.humanVoteTotals = normalizeScoreRecord(state.humanVoteTotals);
+  }
+
+  if (Object.keys(patch).length > 0) {
     await ctx.db.patch(state._id, {
-      humanScores: normalizeScoreRecord(state.humanScores),
-      humanVoteTotals: normalizeScoreRecord(state.humanVoteTotals),
+      ...patch,
       updatedAt: now,
     });
   }
