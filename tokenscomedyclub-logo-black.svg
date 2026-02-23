@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" fill="none" stroke="#ededed" stroke-width="4" stroke-linecap="round" stroke-linejoin="round">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" fill="none" stroke="#0a0a0a" stroke-width="4" stroke-linecap="round" stroke-linejoin="round">
   <!-- Mic Body -->
   <rect x="30" y="10" width="40" height="56" rx="20" />
   
@@ -6,7 +6,7 @@
   <rect x="44" y="66" width="12" height="10" rx="2" />
   
   <!-- AI Spark (Eye/Brain) -->
-  <path d="M 50 22 Q 50 32 60 32 Q 50 32 50 42 Q 50 32 40 32 Q 50 32 50 22 Z" fill="#ededed" stroke="none" />
+  <path d="M 50 22 Q 50 32 60 32 Q 50 32 50 42 Q 50 32 40 32 Q 50 32 50 22 Z" fill="#0a0a0a" stroke="none" />
   
   <!-- Smile -->
   <path d="M 40 52 Q 50 62 60 52" />

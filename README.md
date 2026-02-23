@@ -1,6 +1,6 @@
-# PapoTorto (Convex-Only)
+# TokensComedyClub (Convex-Only)
 
-PapoTorto e um jogo de batalha de respostas entre modelos de IA com voto humano via chat.
+TokensComedyClub e um jogo de batalha de respostas entre modelos de IA com voto humano via chat.
 Todo o backend, banco e realtime rodam no Convex.
 
 Sem SQLite, sem Postgres, sem WebSocket manual e sem Railway.

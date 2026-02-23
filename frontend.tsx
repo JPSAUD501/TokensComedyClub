@@ -103,7 +103,7 @@ function getConvexUrl(): string {
 }
 
 function getOrCreateViewerId(): string {
-  const key = "papotorto.viewerId";
+  const key = "tokenscomedyclub.viewerId";
   const existing = window.localStorage.getItem(key);
   if (existing) return existing;
   const generated = crypto.randomUUID();
@@ -597,10 +597,10 @@ function Standings({
           <a href="/history.html" className="standings__link">
             Historico
           </a>
-          <a href="https://twitch.tv/papotorto" target="_blank" rel="noopener noreferrer" className="standings__link">
+          <a href="https://twitch.tv/tokenscomedyclub" target="_blank" rel="noopener noreferrer" className="standings__link">
             Twitch
           </a>
-          <a href="https://github.com/JPSAUD501/PapoTorto" target="_blank" rel="noopener noreferrer" className="standings__link">
+          <a href="https://github.com/JPSAUD501/TokensComedyClub" target="_blank" rel="noopener noreferrer" className="standings__link">
             GitHub
           </a>
         </div>
@@ -672,7 +672,7 @@ function ConnectingScreen() {
   return (
     <div className="connecting">
       <div className="connecting__logo">
-        <img src="/assets/logo.svg" alt="PapoTorto" />
+        <img src="/assets/logo.svg" alt="TokensComedyClub" />
       </div>
       <div className="connecting__sub">
         Conectando
@@ -752,7 +752,7 @@ function App() {
         <main className="main">
           <header className="header">
             <a href="/" className="logo">
-              <img src="/assets/logo.svg" alt="PapoTorto" />
+              <img src="/assets/logo.svg" alt="TokensComedyClub" />
             </a>
             <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
               {state.isPaused && (

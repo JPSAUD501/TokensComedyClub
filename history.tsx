@@ -70,7 +70,7 @@ function getConvexUrl(): string {
 }
 
 function getOrCreateViewerId(): string {
-  const key = "papotorto.viewerId";
+  const key = "tokenscomedyclub.viewerId";
   const existing = window.localStorage.getItem(key);
   if (existing) return existing;
   const generated = crypto.randomUUID();
@@ -330,7 +330,7 @@ function App() {
   return (
     <div className="app">
       <a href="/index.html" className="main-logo">
-        <img src="/assets/logo.svg" alt="PapoTorto" />
+        <img src="/assets/logo.svg" alt="TokensComedyClub" />
       </a>
       <main className="main">
         <div className="page-header">

@@ -1,4 +1,4 @@
-const FALLBACK_VIEWER_ID_KEY = "papotorto.viewerId";
+const FALLBACK_VIEWER_ID_KEY = "tokenscomedyclub.viewerId";
 
 export function getConvexUrl(): string {
   const value = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env?.VITE_CONVEX_URL;
@@ -9,7 +9,7 @@ export function getConvexUrl(): string {
 }
 
 export function getAdminPasscodeStorageKey(): string {
-  return "papotorto.adminPasscode";
+  return "tokenscomedyclub.adminPasscode";
 }
 
 export function getOrCreateViewerId(key = FALLBACK_VIEWER_ID_KEY): string {

@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   AVAILABLE_MODEL_COLORS,
@@ -38,7 +38,7 @@ type ModelsResponse = { ok: true; models: ModelCatalogEntry[] } & Partial<AdminS
 type Mode = "checking" | "locked" | "ready";
 
 const RESET_TOKEN = "RESET";
-const ADMIN_PASSCODE_KEY = "papotorto.adminPasscode";
+const ADMIN_PASSCODE_KEY = "tokenscomedyclub.adminPasscode";
 
 function getConvexSiteUrl(): string {
   const env = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env;
@@ -283,7 +283,7 @@ function App() {
       const blob = await response.blob();
       const disposition = response.headers.get("content-disposition") ?? "";
       const fileNameMatch = disposition.match(/filename="([^"]+)"/i);
-      const fileName = fileNameMatch?.[1] ?? `papotorto-export-${Date.now()}.json`;
+      const fileName = fileNameMatch?.[1] ?? `tokenscomedyclub-export-${Date.now()}.json`;
 
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
@@ -543,7 +543,7 @@ function App() {
       <div className="admin admin--centered">
         <main className="panel panel--login">
           <a href="/index.html" className="logo-link">
-            <img src="/assets/logo.svg" alt="PapoTorto" />
+            <img src="/assets/logo.svg" alt="TokensComedyClub" />
           </a>
           <h1>Acesso Admin</h1>
           <p className="muted">
@@ -598,7 +598,7 @@ function App() {
     <div className="admin">
       <header className="admin-header">
         <a href="/index.html" className="logo-link">
-          <img src="/assets/logo.svg" alt="PapoTorto" />
+          <img src="/assets/logo.svg" alt="TokensComedyClub" />
         </a>
         <nav className="quick-links">
           <a href="/index.html">Jogo Ao Vivo</a>

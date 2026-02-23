@@ -1,4 +1,4 @@
-﻿# Projeto PapoTorto
+# Projeto TokensComedyClub
 
 ## Stack atual
 

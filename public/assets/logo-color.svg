@@ -1,19 +1,22 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" fill="none">
-  <defs>
-    <linearGradient id="ptc-back" x1="27" y1="34" x2="85" y2="90" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#7A8CFF"/>
-      <stop offset="1" stop-color="#4F66F5"/>
-    </linearGradient>
-    <linearGradient id="ptc-front" x1="43" y1="50" x2="103" y2="104" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#F2A26F"/>
-      <stop offset="1" stop-color="#D97757"/>
-    </linearGradient>
-  </defs>
-
-  <rect x="10" y="10" width="108" height="108" rx="28" fill="#0B0D12" stroke="#FFFFFF" stroke-width="2"/>
-
-  <path d="M39 34H73A12 12 0 0 1 85 46V66A12 12 0 0 1 73 78H61L49 90V78H39A12 12 0 0 1 27 66V46A12 12 0 0 1 39 34Z" fill="url(#ptc-back)"/>
-  <path d="M89 50H55A12 12 0 0 0 43 62V82A12 12 0 0 0 55 94H67L79 106V94H89A12 12 0 0 0 101 82V62A12 12 0 0 0 89 50Z" fill="url(#ptc-front)" stroke="#FFFFFF" stroke-width="2"/>
-
-  <path d="M68 83C61.4 83 56 77.6 56 71C56 64.4 61.4 59 68 59" stroke="#FFFFFF" stroke-width="5" stroke-linecap="round"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" fill="none" stroke-width="4" stroke-linecap="round" stroke-linejoin="round">
+  <!-- Mic Body -->
+  <rect x="30" y="10" width="40" height="56" rx="20" stroke="#FF5722" />
+  
+  <!-- Mic Connector -->
+  <rect x="44" y="66" width="12" height="10" rx="2" stroke="#ededed" />
+  
+  <!-- AI Spark (Eye/Brain) -->
+  <path d="M 50 22 Q 50 32 60 32 Q 50 32 50 42 Q 50 32 40 32 Q 50 32 50 22 Z" fill="#FF5722" stroke="none" />
+  
+  <!-- Smile -->
+  <path d="M 40 52 Q 50 62 60 52" stroke="#FF5722" />
+  
+  <!-- Mic Bracket -->
+  <path d="M 16 42 A 34 34 0 0 0 84 42" stroke="#ededed" />
+  
+  <!-- Mic Stand -->
+  <line x1="50" y1="76" x2="50" y2="94" stroke="#ededed" />
+  
+  <!-- Mic Base -->
+  <line x1="26" y1="94" x2="74" y2="94" stroke="#ededed" />
 </svg>

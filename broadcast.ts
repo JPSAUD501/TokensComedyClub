@@ -383,7 +383,7 @@ function drawHeader() {
   } else {
     ctx.font = '700 40px "Inter", sans-serif';
     ctx.fillStyle = "#ededed";
-    ctx.fillText("PapoTorto", 48, 76);
+    ctx.fillText("TokensComedyClub", 48, 76);
   }
 
 }

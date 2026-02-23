@@ -546,7 +546,7 @@ http.route({
       status: 200,
       headers: {
         "Content-Type": "application/json",
-        "Content-Disposition": `attachment; filename="papotorto-export-${Date.now()}.json"`,
+        "Content-Disposition": `attachment; filename="tokenscomedyclub-export-${Date.now()}.json"`,
         ...corsHeaders(request),
       },
     });

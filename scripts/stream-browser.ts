@@ -115,7 +115,7 @@ async function writePlaylistFile(tracks: string[]): Promise<string> {
   const sequence = buildRandomTrackSequence(tracks, PLAYLIST_TRACKS);
   const filePath = path.join(
     tmpdir(),
-    `papotorto-bg-${Date.now()}-${Math.random().toString(36).slice(2)}.txt`,
+    `tokenscomedyclub-bg-${Date.now()}-${Math.random().toString(36).slice(2)}.txt`,
   );
   const body = sequence.map((track) => `file '${escapeForConcatFile(track)}'`).join("\n") + "\n";
   await writeFile(filePath, body, "utf8");
