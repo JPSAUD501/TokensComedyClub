@@ -229,7 +229,7 @@ function setHistoryCache(key: string, body: string, expiresAt: number) {
 // ── WebSocket clients ───────────────────────────────────────────────────────
 
 const clients = new Set<ServerWebSocket<WsData>>();
-const viewerVoters = new Map<ServerWebSocket<WsData>, "A" | "B">();
+const viewerVoters = new Map<string, "A" | "B">();
 let viewerVoteBroadcastTimer: ReturnType<typeof setTimeout> | null = null;
 
 function scheduleViewerVoteBroadcast() {
@@ -624,14 +624,15 @@ const server = Bun.serve<WsData>({
         if (!round.viewerVotingEndsAt || Date.now() > round.viewerVotingEndsAt) return;
         if (msg.votedFor !== "A" && msg.votedFor !== "B") return;
 
-        const previousVote = viewerVoters.get(ws);
+        const ip = ws.data.ip;
+        const previousVote = viewerVoters.get(ip);
         if (previousVote === msg.votedFor) return; // same vote, ignore
 
         // Undo previous vote if changing
         if (previousVote === "A") round.viewerVotesA = Math.max(0, (round.viewerVotesA ?? 0) - 1);
         else if (previousVote === "B") round.viewerVotesB = Math.max(0, (round.viewerVotesB ?? 0) - 1);
 
-        viewerVoters.set(ws, msg.votedFor);
+        viewerVoters.set(ip, msg.votedFor);
         if (msg.votedFor === "A") round.viewerVotesA = (round.viewerVotesA ?? 0) + 1;
         else round.viewerVotesB = (round.viewerVotesB ?? 0) + 1;
 

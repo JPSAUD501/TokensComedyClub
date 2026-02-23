@@ -193,6 +193,7 @@ body {
 /* ── Contestant ───────────────────────────────────────────────── */
 
 .contestant {
+  position: relative;
   border-left: 3px solid var(--accent);
   padding: 16px 20px;
   display: flex;
@@ -343,14 +344,18 @@ body {
 }
 
 .my-vote-tag {
+  position: absolute;
+  top: 8px;
+  right: 8px;
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 700;
   letter-spacing: 1px;
-  padding: 3px 8px;
+  padding: 2px 6px;
   border: 1px solid var(--text-muted);
   color: var(--text-dim);
   border-radius: 3px;
+  pointer-events: none;
 }
 
 /* ── Viewer Votes ────────────────────────────────────────────── */

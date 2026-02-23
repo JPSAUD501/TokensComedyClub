@@ -195,9 +195,9 @@ function ContestantCard({
     >
       <div className="contestant__head">
         <ModelTag model={task.model} />
-        {isMyVote && <span className="my-vote-tag">YOUR PICK</span>}
         {isWinner && <span className="win-tag">WIN</span>}
       </div>
+      {isMyVote && <span className="my-vote-tag">YOUR PICK</span>}
 
       <div className="contestant__body">
         {!task.finishedAt ? (
