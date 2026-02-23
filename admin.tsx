@@ -105,7 +105,6 @@ function App() {
   const [targetValue, setTargetValue] = useState("");
   const [targetEnabled, setTargetEnabled] = useState(true);
   const [editingTargetId, setEditingTargetId] = useState<string | null>(null);
-  const mountedRef = React.useRef<boolean>(true);
 
   async function loadViewerTargets(passcodeToUse: string) {
     const response = await requestAdminJson<ViewerTargetsResponse>(
@@ -116,36 +115,26 @@ function App() {
   }
 
   useEffect(() => {
-    mountedRef.current = true;
     const storedPasscode = readStoredPasscode();
     if (!storedPasscode) {
       setMode("locked");
-      return () => {
-        mountedRef.current = false;
-      };
+      return;
     }
 
     requestAdminJson<AdminResponse>("/admin/status", storedPasscode)
       .then(async (data) => {
-        if (!mountedRef.current) return;
         setSnapshot(data);
         setMode("ready");
         try {
           await loadViewerTargets(storedPasscode);
         } catch {
-          if (!mountedRef.current) return;
           setViewerTargets([]);
         }
       })
       .catch(() => {
-        if (!mountedRef.current) return;
         setSnapshot(null);
         setMode("locked");
       });
-
-    return () => {
-      mountedRef.current = false;
-    };
   }, []);
 
   const busy = useMemo(() => pending !== null, [pending]);
