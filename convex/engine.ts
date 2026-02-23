@@ -12,6 +12,15 @@ import {
 import { getEngineState, getOrCreateEngineState, isFiniteRuns } from "./state";
 import { readTotalViewerCount } from "./viewerCount";
 
+const modelReasoningEffortValidator = v.union(
+  v.literal("xhigh"),
+  v.literal("high"),
+  v.literal("medium"),
+  v.literal("low"),
+  v.literal("minimal"),
+  v.literal("none"),
+);
+
 function getVotingWindowMs(totalViewerCount: number): number {
   return totalViewerCount > 0 ? VIEWER_VOTE_WINDOW_ACTIVE_MS : VIEWER_VOTE_WINDOW_IDLE_MS;
 }
@@ -136,6 +145,7 @@ export const createRound = internalMutation({
       name: v.string(),
       color: v.optional(v.string()),
       logoId: v.optional(v.string()),
+      reasoningEffort: v.optional(modelReasoningEffortValidator),
     }),
     contestants: v.array(
       v.object({
@@ -143,6 +153,7 @@ export const createRound = internalMutation({
         name: v.string(),
         color: v.optional(v.string()),
         logoId: v.optional(v.string()),
+        reasoningEffort: v.optional(modelReasoningEffortValidator),
       }),
     ),
   },
@@ -366,6 +377,7 @@ export const startVoting = internalMutation({
         name: v.string(),
         color: v.optional(v.string()),
         logoId: v.optional(v.string()),
+        reasoningEffort: v.optional(modelReasoningEffortValidator),
       }),
     ),
   },

@@ -10,6 +10,15 @@ export const AVAILABLE_MODEL_LOGO_IDS = [
   "qwen",
 ] as const;
 
+export const AVAILABLE_REASONING_EFFORTS = [
+  "xhigh",
+  "high",
+  "medium",
+  "low",
+  "minimal",
+  "none",
+] as const;
+
 export const AVAILABLE_MODEL_COLORS = [
   "#10A37F",
   "#14B8A6",
@@ -38,12 +47,14 @@ export const AVAILABLE_MODEL_COLORS = [
 ] as const;
 
 export type ModelLogoId = (typeof AVAILABLE_MODEL_LOGO_IDS)[number];
+export type ModelReasoningEffort = (typeof AVAILABLE_REASONING_EFFORTS)[number];
 
 export type Model = {
   id: string;
   name: string;
   color?: string;
   logoId?: ModelLogoId;
+  reasoningEffort?: ModelReasoningEffort;
 };
 
 export type ModelCatalogEntry = {
@@ -52,6 +63,7 @@ export type ModelCatalogEntry = {
   name: string;
   color: string;
   logoId: ModelLogoId;
+  reasoningEffort: ModelReasoningEffort;
   enabled: boolean;
   archivedAt?: number;
   createdAt?: number;
@@ -59,16 +71,30 @@ export type ModelCatalogEntry = {
 };
 
 export const DEFAULT_MODEL_COLOR = "#A1A1A1";
+export const DEFAULT_MODEL_REASONING_EFFORT: ModelReasoningEffort = "medium";
 
 const LOGO_ID_SET = new Set<string>(AVAILABLE_MODEL_LOGO_IDS);
+const REASONING_EFFORT_SET = new Set<string>(AVAILABLE_REASONING_EFFORTS);
 
 export function isValidModelLogoId(value: string): value is ModelLogoId {
   return LOGO_ID_SET.has(value);
 }
 
+export function isValidModelReasoningEffort(value: string): value is ModelReasoningEffort {
+  return REASONING_EFFORT_SET.has(value);
+}
+
 export function getLogoUrlById(logoId?: string | null): string | null {
   if (!logoId || !isValidModelLogoId(logoId)) return null;
   return `/assets/logos/${logoId}.svg`;
+}
+
+export function normalizeModelReasoningEffort(input?: string | null): ModelReasoningEffort {
+  const value = (input ?? "").trim().toLowerCase();
+  if (isValidModelReasoningEffort(value)) {
+    return value;
+  }
+  return DEFAULT_MODEL_REASONING_EFFORT;
 }
 
 export function normalizeHexColor(input?: string | null): string {
@@ -79,11 +105,14 @@ export function normalizeHexColor(input?: string | null): string {
   return DEFAULT_MODEL_COLOR;
 }
 
-export function toRuntimeModel(entry: Pick<ModelCatalogEntry, "modelId" | "name" | "color" | "logoId">): Model {
+export function toRuntimeModel(
+  entry: Pick<ModelCatalogEntry, "modelId" | "name" | "color" | "logoId" | "reasoningEffort">,
+): Model {
   return {
     id: entry.modelId,
     name: entry.name,
     color: normalizeHexColor(entry.color),
     logoId: entry.logoId,
+    reasoningEffort: normalizeModelReasoningEffort(entry.reasoningEffort),
   };
 }

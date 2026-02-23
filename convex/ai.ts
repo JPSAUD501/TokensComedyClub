@@ -3,7 +3,7 @@
 import { generateText } from "ai";
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { ALL_PROMPTS } from "../prompts";
-import type { Model } from "../shared/models";
+import { normalizeModelReasoningEffort, type Model } from "../shared/models";
 import {
   MODEL_ATTEMPTS,
   MODEL_CALL_TIMEOUT_MS,
@@ -14,10 +14,19 @@ import {
 
 const openrouter = createOpenRouter({
   apiKey: process.env.OPENROUTER_API_KEY,
-  extraBody: {
-    reasoning: { effort: "medium" },
-  },
 });
+
+function getModelChat(model: Model) {
+  const effort = normalizeModelReasoningEffort(model.reasoningEffort);
+  if (effort === "none") {
+    return openrouter.chat(model.id);
+  }
+  return openrouter.chat(model.id, {
+    extraBody: {
+      reasoning: { effort },
+    },
+  });
+}
 
 function cleanResponse(text: string): string {
   const trimmed = text.trim();
@@ -70,7 +79,7 @@ export async function callGeneratePrompt(model: Model): Promise<string> {
   return withRetry(
     async () => {
       const { text } = await generateText({
-        model: openrouter.chat(model.id),
+        model: getModelChat(model),
         system: buildPromptSystem(),
         prompt:
           "Gere um unico prompt original de Quiplash. Seja criativo e nao repita padroes comuns.",
@@ -88,7 +97,7 @@ export async function callGenerateAnswer(model: Model, prompt: string): Promise<
   return withRetry(
     async () => {
       const { text } = await generateText({
-        model: openrouter.chat(model.id),
+        model: getModelChat(model),
         system:
           "You are playing Quiplash! You'll be given a fill-in-the-blank prompt. Give the FUNNIEST possible answer. Be creative, edgy, unexpected, and concise. Reply with ONLY your answer - no quotes, no explanation, no preamble. Keep it short (under 12 words).",
         prompt: `Fill in the blank: ${prompt}`,
@@ -111,7 +120,7 @@ export async function callVote(
   return withRetry(
     async () => {
       const { text } = await generateText({
-        model: openrouter.chat(voter.id),
+        model: getModelChat(voter),
         system:
           "You are a judge in a comedy game. You'll see a fill-in-the-blank prompt and two answers. Pick which answer is FUNNIER. You MUST respond with exactly \"A\" or \"B\".",
         prompt: `Prompt: \"${prompt}\"\n\nAnswer A: \"${a.answer}\"\nAnswer B: \"${b.answer}\"\n\nWhich is funnier? Reply with just A or B.`,

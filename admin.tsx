@@ -3,6 +3,9 @@ import { createRoot } from "react-dom/client";
 import {
   AVAILABLE_MODEL_COLORS,
   AVAILABLE_MODEL_LOGO_IDS,
+  AVAILABLE_REASONING_EFFORTS,
+  DEFAULT_MODEL_REASONING_EFFORT,
+  normalizeModelReasoningEffort,
   normalizeHexColor,
   type ModelCatalogEntry,
 } from "./shared/models";
@@ -126,6 +129,9 @@ function App() {
   const [modelName, setModelName] = useState("");
   const [modelColor, setModelColor] = useState<string>(AVAILABLE_MODEL_COLORS[0]);
   const [modelLogoId, setModelLogoId] = useState<(typeof AVAILABLE_MODEL_LOGO_IDS)[number]>("openai");
+  const [modelReasoningEffort, setModelReasoningEffort] = useState<(typeof AVAILABLE_REASONING_EFFORTS)[number]>(
+    DEFAULT_MODEL_REASONING_EFFORT,
+  );
   const [modelEnabled, setModelEnabled] = useState(true);
   const [editingModelOriginalId, setEditingModelOriginalId] = useState<string | null>(null);
   const [isModelFormOpen, setIsModelFormOpen] = useState(false);
@@ -200,6 +206,7 @@ function App() {
     setModelName("");
     setModelColor(AVAILABLE_MODEL_COLORS[0]);
     setModelLogoId("openai");
+    setModelReasoningEffort(DEFAULT_MODEL_REASONING_EFFORT);
     setModelEnabled(true);
     setEditingModelOriginalId(null);
     setIsModelFormOpen(false);
@@ -210,6 +217,7 @@ function App() {
     setModelName("");
     setModelColor(AVAILABLE_MODEL_COLORS[0]);
     setModelLogoId("openai");
+    setModelReasoningEffort(DEFAULT_MODEL_REASONING_EFFORT);
     setModelEnabled(true);
     setEditingModelOriginalId(null);
     setIsModelFormOpen(true);
@@ -220,6 +228,7 @@ function App() {
     setModelName(model.name);
     setModelColor(normalizeHexColor(model.color));
     setModelLogoId(model.logoId);
+    setModelReasoningEffort(normalizeModelReasoningEffort(model.reasoningEffort));
     setModelEnabled(model.enabled);
     setEditingModelOriginalId(model.modelId);
     setIsModelFormOpen(true);
@@ -419,6 +428,7 @@ function App() {
             name: modelName.trim(),
             color: normalizeHexColor(modelColor),
             logoId: modelLogoId,
+            reasoningEffort: normalizeModelReasoningEffort(modelReasoningEffort),
             enabled: modelEnabled,
           }
         : {
@@ -426,6 +436,7 @@ function App() {
             name: modelName.trim(),
             color: normalizeHexColor(modelColor),
             logoId: modelLogoId,
+            reasoningEffort: normalizeModelReasoningEffort(modelReasoningEffort),
             enabled: modelEnabled,
           };
       const data = await requestAdminJson<ModelsResponse>(path, passcodeValue, {
@@ -792,6 +803,27 @@ function App() {
               ))}
             </select>
 
+            <label className="field-label" htmlFor="model-reasoning-effort">
+              Reasoning Effort
+            </label>
+            <select
+              id="model-reasoning-effort"
+              className="text-input"
+              value={modelReasoningEffort}
+              onChange={(event) =>
+                setModelReasoningEffort(
+                  event.target.value as (typeof AVAILABLE_REASONING_EFFORTS)[number],
+                )
+              }
+              disabled={busy}
+            >
+              {AVAILABLE_REASONING_EFFORTS.map((effort) => (
+                <option key={effort} value={effort}>
+                  {effort}
+                </option>
+              ))}
+            </select>
+
             <label className="models__checkbox">
               <input
                 type="checkbox"
@@ -848,7 +880,8 @@ function App() {
                     </div>
                     <span className="model-row__id">{model.modelId}</span>
                     <span className="model-row__id">
-                      logo: {model.logoId} | {formatArchivedAt(model.archivedAt)}
+                      logo: {model.logoId} | effort: {normalizeModelReasoningEffort(model.reasoningEffort)} |{" "}
+                      {formatArchivedAt(model.archivedAt)}
                     </span>
                   </div>
                   <div className="model-row__actions">

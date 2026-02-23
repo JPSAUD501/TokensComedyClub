@@ -1,22 +1,120 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" fill="none" stroke="#ededed" stroke-width="4" stroke-linecap="round" stroke-linejoin="round">
-  <!-- Mic Body -->
-  <rect x="30" y="10" width="40" height="56" rx="20" />
-  
-  <!-- Mic Connector -->
-  <rect x="44" y="66" width="12" height="10" rx="2" />
-  
-  <!-- AI Spark (Eye/Brain) -->
-  <path d="M 50 22 Q 50 32 60 32 Q 50 32 50 42 Q 50 32 40 32 Q 50 32 50 22 Z" fill="#ededed" stroke="none" />
-  
-  <!-- Smile -->
-  <path d="M 40 52 Q 50 62 60 52" />
-  
-  <!-- Mic Bracket -->
-  <path d="M 16 42 A 34 34 0 0 0 84 42" />
-  
-  <!-- Mic Stand -->
-  <line x1="50" y1="76" x2="50" y2="94" />
-  
-  <!-- Mic Base -->
-  <line x1="26" y1="94" x2="74" y2="94" />
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="145 95 210 285" fill="none">
+  <defs>
+    <filter id="neon-glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="8" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+  </defs>
+
+  <g opacity="0.55">
+    <animateTransform attributeName="transform" type="rotate" values="360 250 220; 0 250 220" dur="26s" repeatCount="indefinite" />
+    <circle cx="250" cy="220" r="112" fill="none" stroke="#2A1B38" stroke-width="3" stroke-dasharray="7 10" />
+    <circle cx="250" cy="220" r="102" fill="none" stroke="#00F0FF" stroke-width="4" stroke-dasharray="54 96 18 70" />
+    <circle cx="250" cy="220" r="92" fill="none" stroke="#7828C8" stroke-width="4" stroke-dasharray="28 36" />
+  </g>
+
+  <g>
+    <animateTransform attributeName="transform" type="rotate" values="-4 250 350; 4 250 350; -4 250 350" dur="2s" repeatCount="indefinite" />
+    <polygon points="250,350 190,325 190,375" fill="#11051F" stroke="#FFD700" stroke-width="5" stroke-linejoin="round" />
+    <polygon points="250,350 310,325 310,375" fill="#11051F" stroke="#FFD700" stroke-width="5" stroke-linejoin="round" />
+    <line x1="210" y1="337" x2="210" y2="363" stroke="#FFD700" stroke-width="4" />
+    <line x1="290" y1="337" x2="290" y2="363" stroke="#FFD700" stroke-width="4" />
+    <circle cx="250" cy="350" r="11" fill="#FFD700" />
+    <circle cx="250" cy="350" r="5" fill="#11051F" />
+  </g>
+
+  <g>
+    <animateTransform attributeName="transform" type="translate" values="0 -4; 0 4; 0 -4" dur="3s" repeatCount="indefinite" />
+    <polygon points="250,110 345,165 345,275 250,330 155,275 155,165" fill="#0A0212" stroke="#FF0055" stroke-width="24" opacity="0.3" />
+    <polygon points="250,110 345,165 345,275 250,330 155,275 155,165" fill="#0A0212" stroke="#FF0055" stroke-width="8" />
+    <polygon points="250,110 345,165 345,275 250,330 155,275 155,165" fill="none" stroke="#FFFFFF" stroke-width="3" />
+
+    <g>
+      <animateTransform attributeName="transform" type="rotate" values="0 250 220; 360 250 220" dur="10s" repeatCount="indefinite" />
+      <polygon points="250,130 328,175 328,265 250,310 172,265 172,175" fill="none" stroke="#8A2BE2" stroke-width="5" stroke-dasharray="16 14" opacity="0.95" />
+      <circle cx="250" cy="130" r="5" fill="#00F0FF" />
+      <circle cx="250" cy="310" r="5" fill="#FF0055" />
+    </g>
+
+    <g stroke="#00F0FF" stroke-width="16" stroke-linecap="round" fill="none" opacity="0.35">
+      <path d="M 190,190 Q 210,160 230,190">
+        <animate attributeName="d" values="M 190,190 Q 210,160 230,190; M 190,190 Q 210,190 230,190; M 190,190 Q 210,160 230,190; M 190,190 Q 210,160 230,190" keyTimes="0; 0.03; 0.06; 1" dur="4s" repeatCount="indefinite" />
+      </path>
+      <path d="M 270,190 Q 290,160 310,190">
+        <animate attributeName="d" values="M 270,190 Q 290,160 310,190; M 270,190 Q 290,190 310,190; M 270,190 Q 290,160 310,190; M 270,190 Q 290,160 310,190" keyTimes="0; 0.03; 0.06; 1" dur="4s" repeatCount="indefinite" />
+      </path>
+    </g>
+
+    <g stroke="#FFFFFF" stroke-width="6" stroke-linecap="round" fill="none">
+      <path d="M 190,190 Q 210,160 230,190">
+        <animate attributeName="d" values="M 190,190 Q 210,160 230,190; M 190,190 Q 210,190 230,190; M 190,190 Q 210,160 230,190; M 190,190 Q 210,160 230,190" keyTimes="0; 0.03; 0.06; 1" dur="4s" repeatCount="indefinite" />
+      </path>
+      <path d="M 270,190 Q 290,160 310,190">
+        <animate attributeName="d" values="M 270,190 Q 290,160 310,190; M 270,190 Q 290,190 310,190; M 270,190 Q 290,160 310,190; M 270,190 Q 290,160 310,190" keyTimes="0; 0.03; 0.06; 1" dur="4s" repeatCount="indefinite" />
+      </path>
+    </g>
+
+    <g stroke-linecap="round" filter="url(#neon-glow)">
+      <g stroke="#00F0FF" stroke-width="12">
+        <line x1="190" y1="230" x2="190" y2="230">
+          <animate attributeName="y1" values="230; 222; 228; 220; 226; 230" dur="0.6s" repeatCount="indefinite" />
+          <animate attributeName="y2" values="230; 238; 232; 240; 234; 230" dur="0.6s" repeatCount="indefinite" />
+        </line>
+        <line x1="210" y1="245" x2="210" y2="245">
+          <animate attributeName="y1" values="245; 230; 240; 225; 235; 245" dur="0.7s" repeatCount="indefinite" />
+          <animate attributeName="y2" values="245; 260; 250; 265; 255; 245" dur="0.7s" repeatCount="indefinite" />
+        </line>
+        <line x1="230" y1="255" x2="230" y2="255">
+          <animate attributeName="y1" values="255; 230; 245; 225; 240; 255" dur="0.5s" repeatCount="indefinite" />
+          <animate attributeName="y2" values="255; 280; 265; 285; 270; 255" dur="0.5s" repeatCount="indefinite" />
+        </line>
+        <line x1="250" y1="260" x2="250" y2="260">
+          <animate attributeName="y1" values="260; 220; 245; 215; 240; 260" dur="0.65s" repeatCount="indefinite" />
+          <animate attributeName="y2" values="260; 300; 275; 305; 280; 260" dur="0.65s" repeatCount="indefinite" />
+        </line>
+        <line x1="270" y1="255" x2="270" y2="255">
+          <animate attributeName="y1" values="255; 225; 240; 230; 245; 255" dur="0.55s" repeatCount="indefinite" />
+          <animate attributeName="y2" values="255; 285; 270; 280; 265; 255" dur="0.55s" repeatCount="indefinite" />
+        </line>
+        <line x1="290" y1="245" x2="290" y2="245">
+          <animate attributeName="y1" values="245; 225; 235; 230; 240; 245" dur="0.75s" repeatCount="indefinite" />
+          <animate attributeName="y2" values="245; 265; 255; 260; 250; 245" dur="0.75s" repeatCount="indefinite" />
+        </line>
+        <line x1="310" y1="230" x2="310" y2="230">
+          <animate attributeName="y1" values="230; 220; 226; 222; 228; 230" dur="0.65s" repeatCount="indefinite" />
+          <animate attributeName="y2" values="230; 240; 234; 238; 232; 230" dur="0.65s" repeatCount="indefinite" />
+        </line>
+      </g>
+      <g stroke="#FFFFFF" stroke-width="5">
+        <line x1="190" y1="230" x2="190" y2="230">
+          <animate attributeName="y1" values="230; 222; 228; 220; 226; 230" dur="0.6s" repeatCount="indefinite" />
+          <animate attributeName="y2" values="230; 238; 232; 240; 234; 230" dur="0.6s" repeatCount="indefinite" />
+        </line>
+        <line x1="210" y1="245" x2="210" y2="245">
+          <animate attributeName="y1" values="245; 230; 240; 225; 235; 245" dur="0.7s" repeatCount="indefinite" />
+          <animate attributeName="y2" values="245; 260; 250; 265; 255; 245" dur="0.7s" repeatCount="indefinite" />
+        </line>
+        <line x1="230" y1="255" x2="230" y2="255">
+          <animate attributeName="y1" values="255; 230; 245; 225; 240; 255" dur="0.5s" repeatCount="indefinite" />
+          <animate attributeName="y2" values="255; 280; 265; 285; 270; 255" dur="0.5s" repeatCount="indefinite" />
+        </line>
+        <line x1="250" y1="260" x2="250" y2="260">
+          <animate attributeName="y1" values="260; 220; 245; 215; 240; 260" dur="0.65s" repeatCount="indefinite" />
+          <animate attributeName="y2" values="260; 300; 275; 305; 280; 260" dur="0.65s" repeatCount="indefinite" />
+        </line>
+        <line x1="270" y1="255" x2="270" y2="255">
+          <animate attributeName="y1" values="255; 225; 240; 230; 245; 255" dur="0.55s" repeatCount="indefinite" />
+          <animate attributeName="y2" values="255; 285; 270; 280; 265; 255" dur="0.55s" repeatCount="indefinite" />
+        </line>
+        <line x1="290" y1="245" x2="290" y2="245">
+          <animate attributeName="y1" values="245; 225; 235; 230; 240; 245" dur="0.75s" repeatCount="indefinite" />
+          <animate attributeName="y2" values="245; 265; 255; 260; 250; 245" dur="0.75s" repeatCount="indefinite" />
+        </line>
+        <line x1="310" y1="230" x2="310" y2="230">
+          <animate attributeName="y1" values="230; 220; 226; 222; 228; 230" dur="0.65s" repeatCount="indefinite" />
+          <animate attributeName="y2" values="230; 240; 234; 238; 232; 230" dur="0.65s" repeatCount="indefinite" />
+        </line>
+      </g>
+    </g>
+  </g>
 </svg>

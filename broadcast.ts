@@ -377,7 +377,7 @@ function drawHeader() {
   ctx.fillRect(0, 0, WIDTH, HEIGHT);
 
   if (brandLogo.complete && brandLogo.naturalHeight !== 0) {
-    const logoHeight = 34;
+    const logoHeight = 60;
     const logoWidth = (brandLogo.naturalWidth / brandLogo.naturalHeight) * logoHeight;
     ctx.drawImage(brandLogo, 48, 44, logoWidth, logoHeight);
   } else {
@@ -510,16 +510,33 @@ function drawRound(round: RoundState, roundNumber: number) {
   ctx.font = '600 18px "JetBrains Mono", monospace';
   ctx.fillStyle = "#888";
   const promptedText = "PROMPT DE ";
+  const prompterName = round.prompter.name.toUpperCase();
+  const promptHeaderBaselineY = 210;
   ctx.fillText(promptedText, 64, 210);
 
   const pTw = ctx.measureText(promptedText).width;
   ctx.fillStyle = getColor(round.prompter.name, round.prompter.color);
-  const drewPLogo = drawModelLogo(round.prompter.name, 64 + pTw, 210 - 14, 20, round.prompter.logoId);
+  const prompterMetrics = ctx.measureText(prompterName);
+  const prompterAscent = prompterMetrics.actualBoundingBoxAscent || 13;
+  const prompterDescent = prompterMetrics.actualBoundingBoxDescent || 1;
+  const prompterTextTop = promptHeaderBaselineY - prompterAscent;
+  const prompterTextHeight = prompterAscent + prompterDescent;
+  const PROMPTER_LOGO_OPTICAL_OFFSET_Y = -1;
+  const prompterLogoY = Math.round(
+    prompterTextTop + (prompterTextHeight - 20) / 2 + PROMPTER_LOGO_OPTICAL_OFFSET_Y,
+  );
+  const drewPLogo = drawModelLogo(
+    round.prompter.name,
+    64 + pTw,
+    prompterLogoY,
+    20,
+    round.prompter.logoId,
+  );
 
   if (drewPLogo) {
-    ctx.fillText(round.prompter.name.toUpperCase(), 64 + pTw + 24, 210);
+    ctx.fillText(prompterName, 64 + pTw + 24, promptHeaderBaselineY);
   } else {
-    ctx.fillText(round.prompter.name.toUpperCase(), 64 + pTw, 210);
+    ctx.fillText(prompterName, 64 + pTw, promptHeaderBaselineY);
   }
 
   const promptText =

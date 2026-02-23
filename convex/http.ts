@@ -1,6 +1,10 @@
 import { httpRouter } from "convex/server";
 import { httpAction } from "./_generated/server";
 import { internal } from "./_generated/api";
+import {
+  isValidModelReasoningEffort,
+  normalizeModelReasoningEffort,
+} from "../shared/models";
 const convexInternal = internal as any;
 
 const http = httpRouter();
@@ -288,6 +292,7 @@ http.route({
       name?: string;
       color?: string;
       logoId?: string;
+      reasoningEffort?: string;
       enabled?: boolean;
     };
     if (typeof payload.modelId !== "string" || !payload.modelId.trim()) {
@@ -302,6 +307,13 @@ http.route({
     if (typeof payload.logoId !== "string" || !payload.logoId.trim()) {
       return text(request, "Invalid logoId", 400);
     }
+    if (
+      payload.reasoningEffort !== undefined &&
+      (typeof payload.reasoningEffort !== "string" ||
+        !isValidModelReasoningEffort(payload.reasoningEffort.trim().toLowerCase()))
+    ) {
+      return text(request, "Invalid reasoningEffort", 400);
+    }
 
     try {
       await ctx.runMutation(convexInternal.models.createModel, {
@@ -309,6 +321,10 @@ http.route({
         name: payload.name.trim(),
         color: payload.color.trim(),
         logoId: payload.logoId.trim(),
+        reasoningEffort:
+          typeof payload.reasoningEffort === "string"
+            ? normalizeModelReasoningEffort(payload.reasoningEffort)
+            : undefined,
         enabled: payload.enabled !== false,
       });
     } catch (error) {
@@ -343,6 +359,7 @@ http.route({
       name?: string;
       color?: string;
       logoId?: string;
+      reasoningEffort?: string;
       enabled?: boolean;
     };
 
@@ -361,6 +378,13 @@ http.route({
     if (typeof payload.logoId !== "string" || !payload.logoId.trim()) {
       return text(request, "Invalid logoId", 400);
     }
+    if (
+      payload.reasoningEffort !== undefined &&
+      (typeof payload.reasoningEffort !== "string" ||
+        !isValidModelReasoningEffort(payload.reasoningEffort.trim().toLowerCase()))
+    ) {
+      return text(request, "Invalid reasoningEffort", 400);
+    }
     if (typeof payload.enabled !== "boolean") {
       return text(request, "Invalid enabled", 400);
     }
@@ -372,6 +396,10 @@ http.route({
         name: payload.name.trim(),
         color: payload.color.trim(),
         logoId: payload.logoId.trim(),
+        reasoningEffort:
+          typeof payload.reasoningEffort === "string"
+            ? normalizeModelReasoningEffort(payload.reasoningEffort)
+            : undefined,
         enabled: payload.enabled,
       });
     } catch (error) {

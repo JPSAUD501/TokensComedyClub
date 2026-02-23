@@ -2,7 +2,9 @@ import { v } from "convex/values";
 import { internalMutation, internalQuery } from "./_generated/server";
 import {
   AVAILABLE_MODEL_LOGO_IDS,
+  DEFAULT_MODEL_REASONING_EFFORT,
   isValidModelLogoId,
+  normalizeModelReasoningEffort,
   normalizeHexColor,
   toRuntimeModel,
   type Model,
@@ -14,7 +16,19 @@ export const MIN_ACTIVE_MODELS = 3;
 
 export type RunBlockedReason = "insufficient_active_models" | null;
 
-type SeedModel = Pick<ModelCatalogEntry, "modelId" | "name" | "color" | "logoId" | "enabled">;
+type SeedModel = Pick<
+  ModelCatalogEntry,
+  "modelId" | "name" | "color" | "logoId" | "reasoningEffort" | "enabled"
+>;
+
+const reasoningEffortValidator = v.union(
+  v.literal("xhigh"),
+  v.literal("high"),
+  v.literal("medium"),
+  v.literal("low"),
+  v.literal("minimal"),
+  v.literal("none"),
+);
 
 const LEGACY_MODEL_SEED: SeedModel[] = [
   {
@@ -22,6 +36,7 @@ const LEGACY_MODEL_SEED: SeedModel[] = [
     name: "Gemini 3 Flash",
     color: "#4285F4",
     logoId: "gemini",
+    reasoningEffort: "medium",
     enabled: true,
   },
   {
@@ -29,6 +44,7 @@ const LEGACY_MODEL_SEED: SeedModel[] = [
     name: "Kimi K2",
     color: "#00E599",
     logoId: "kimi",
+    reasoningEffort: "medium",
     enabled: true,
   },
   {
@@ -36,6 +52,7 @@ const LEGACY_MODEL_SEED: SeedModel[] = [
     name: "DeepSeek 3.2",
     color: "#4D6BFE",
     logoId: "deepseek",
+    reasoningEffort: "medium",
     enabled: true,
   },
   {
@@ -43,6 +60,7 @@ const LEGACY_MODEL_SEED: SeedModel[] = [
     name: "MiniMax 2.5",
     color: "#FF3B30",
     logoId: "minimax",
+    reasoningEffort: "medium",
     enabled: true,
   },
   {
@@ -50,6 +68,7 @@ const LEGACY_MODEL_SEED: SeedModel[] = [
     name: "GLM-5",
     color: "#1F63EC",
     logoId: "glm",
+    reasoningEffort: "medium",
     enabled: true,
   },
   {
@@ -57,6 +76,7 @@ const LEGACY_MODEL_SEED: SeedModel[] = [
     name: "GPT-5.2",
     color: "#10A37F",
     logoId: "openai",
+    reasoningEffort: "medium",
     enabled: true,
   },
   {
@@ -64,6 +84,7 @@ const LEGACY_MODEL_SEED: SeedModel[] = [
     name: "Sonnet 4.6",
     color: "#D97757",
     logoId: "claude",
+    reasoningEffort: "medium",
     enabled: true,
   },
   {
@@ -71,6 +92,7 @@ const LEGACY_MODEL_SEED: SeedModel[] = [
     name: "Grok 4.1",
     color: "#FFFFFF",
     logoId: "grok",
+    reasoningEffort: "medium",
     enabled: true,
   },
 ];
@@ -92,6 +114,7 @@ function toCatalogEntry(row: any): ModelCatalogEntry {
     name: row.name,
     color: normalizeHexColor(row.color),
     logoId: row.logoId,
+    reasoningEffort: normalizeModelReasoningEffort(row.reasoningEffort),
     enabled: Boolean(row.enabled),
     archivedAt: row.archivedAt,
     createdAt: row.createdAt,
@@ -154,6 +177,7 @@ export async function ensureModelCatalogSeededImpl(ctx: { db: any }): Promise<Mo
       name: model.name,
       color: model.color,
       logoId: model.logoId,
+      reasoningEffort: model.reasoningEffort,
       enabled: model.enabled,
       createdAt: now,
       updatedAt: now,
@@ -212,6 +236,7 @@ export const listActiveForRuntime = internalQuery({
       name: v.string(),
       color: v.optional(v.string()),
       logoId: v.optional(v.string()),
+      reasoningEffort: v.optional(reasoningEffortValidator),
     }),
   ),
   handler: async (ctx) => {
@@ -228,6 +253,7 @@ export const createModel = internalMutation({
     name: v.string(),
     color: v.string(),
     logoId: v.string(),
+    reasoningEffort: v.optional(reasoningEffortValidator),
     enabled: v.optional(v.boolean()),
   },
   returns: v.any(),
@@ -236,6 +262,9 @@ export const createModel = internalMutation({
     const name = trimRequired(args.name, "name");
     const color = trimRequired(args.color, "color");
     const logoId = trimRequired(args.logoId, "logoId");
+    const reasoningEffort = normalizeModelReasoningEffort(
+      args.reasoningEffort ?? DEFAULT_MODEL_REASONING_EFFORT,
+    );
     assertLogoId(logoId);
     if (!isHexColor(color)) {
       throw new Error("Cor invalida. Use formato #RRGGBB.");
@@ -264,6 +293,7 @@ export const createModel = internalMutation({
         name,
         color: normalizeHexColor(color),
         logoId,
+        reasoningEffort,
         enabled: args.enabled ?? true,
         archivedAt: undefined,
         updatedAt: now,
@@ -277,6 +307,7 @@ export const createModel = internalMutation({
         name,
         color: normalizeHexColor(color),
         logoId,
+        reasoningEffort,
         enabled: args.enabled ?? true,
         createdAt: now,
         updatedAt: now,
@@ -383,6 +414,7 @@ export const updateModel = internalMutation({
     name: v.string(),
     color: v.string(),
     logoId: v.string(),
+    reasoningEffort: v.optional(reasoningEffortValidator),
     enabled: v.boolean(),
   },
   returns: v.any(),
@@ -408,6 +440,10 @@ export const updateModel = internalMutation({
       throw new Error("Modelo arquivado nao pode ser editado.");
     }
 
+    const reasoningEffort = normalizeModelReasoningEffort(
+      args.reasoningEffort ?? existing.reasoningEffort ?? DEFAULT_MODEL_REASONING_EFFORT,
+    );
+
     const existingById = await ctx.db
       .query("models")
       .withIndex("by_modelId", (q: any) => q.eq("modelId", modelId))
@@ -429,6 +465,7 @@ export const updateModel = internalMutation({
       name,
       color: normalizeHexColor(color),
       logoId,
+      reasoningEffort,
       enabled: args.enabled,
       updatedAt: Date.now(),
     });

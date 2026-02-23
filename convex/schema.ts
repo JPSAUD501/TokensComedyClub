@@ -1,11 +1,21 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 
+const modelReasoningEffortValidator = v.union(
+  v.literal("xhigh"),
+  v.literal("high"),
+  v.literal("medium"),
+  v.literal("low"),
+  v.literal("minimal"),
+  v.literal("none"),
+);
+
 const modelValidator = v.object({
   id: v.string(),
   name: v.string(),
   color: v.optional(v.string()),
   logoId: v.optional(v.string()),
+  reasoningEffort: v.optional(modelReasoningEffortValidator),
 });
 
 const taskValidator = v.object({
@@ -30,6 +40,7 @@ export default defineSchema({
     name: v.string(),
     color: v.string(),
     logoId: v.string(),
+    reasoningEffort: v.optional(modelReasoningEffortValidator),
     enabled: v.boolean(),
     archivedAt: v.optional(v.number()),
     createdAt: v.number(),
