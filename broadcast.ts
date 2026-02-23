@@ -6,6 +6,11 @@ import {
   normalizeHexColor,
   type ModelCatalogEntry,
 } from "./shared/models";
+import {
+  ReasoningProgressEstimator,
+  reasoningProgressKey,
+} from "./shared/reasoningEstimator";
+import type { ActiveReasoningProgressItem, TaskMetrics } from "./shared/types";
 
 type Model = { id: string; name: string; color?: string; logoId?: string };
 type TaskInfo = {
@@ -14,6 +19,7 @@ type TaskInfo = {
   finishedAt?: number;
   result?: string;
   error?: string;
+  metrics?: TaskMetrics;
 };
 type VoteInfo = {
   voter: Model;
@@ -66,6 +72,10 @@ type ViewerCountMessage = {
   viewerCount: number;
 };
 type ServerMessage = StateMessage | ViewerCountMessage;
+type LiveReasoningPayload = {
+  roundId: string | null;
+  entries: ActiveReasoningProgressItem[];
+};
 
 const DEFAULT_UI_COLOR = "#A1A1A1";
 let modelCatalogByName = new Map<string, ModelCatalogEntry>();
@@ -76,9 +86,11 @@ const ROUND_STATUS_BOX_W = 300;
 const ROUND_STATUS_BOX_Y = 150;
 const ROUND_STATUS_BOX_RIGHT_PADDING = 64;
 const ROUND_STATUS_PROMPT_RESERVE = 0;
+const LOCAL_REASONING_TICK_MS = 50;
 
 const canvas = document.getElementById("broadcast-canvas") as HTMLCanvasElement;
 const statusEl = document.getElementById("broadcast-status") as HTMLDivElement;
+const brandLogo = document.getElementById("broadcast-brand-logo-source") as HTMLImageElement | null;
 
 function get2dContext(el: HTMLCanvasElement): CanvasRenderingContext2D {
   const context = el.getContext("2d");
@@ -95,7 +107,13 @@ let connected = false;
 const convex = new ConvexClient(getConvexUrl());
 const convexApi = api as any;
 const countdownTracker = createVotingCountdownTracker();
+const reasoningEstimator = new ReasoningProgressEstimator({
+  syncBlendMs: 320,
+  maxExtrapolationMs: 1_600,
+});
 let liveUnsubscribe: { unsubscribe: () => void } | null = null;
+let reasoningUnsubscribe: { unsubscribe: () => void } | null = null;
+let lastEstimatorTickAt = 0;
 
 function syncModelCatalog(models: ModelCatalogEntry[]) {
   modelCatalogByName = new Map(models.map((model) => [model.name, model]));
@@ -114,8 +132,6 @@ function getLogoUrl(name: string, fallbackLogoId?: string): string | null {
 }
 
 const logoCache: Record<string, HTMLImageElement> = {};
-const brandLogo = new Image();
-brandLogo.src = "/assets/logo.svg";
 
 function drawModelLogo(
   name: string,
@@ -204,6 +220,7 @@ function setupRealtime() {
   void convex.mutation(convexApi.live.ensureStarted, {});
 
   liveUnsubscribe?.unsubscribe();
+  reasoningUnsubscribe?.unsubscribe();
   liveUnsubscribe = convex.onUpdate(
     convexApi.live.getState,
     {},
@@ -215,6 +232,29 @@ function setupRealtime() {
     },
     () => {
       connected = false;
+    },
+  );
+
+  reasoningUnsubscribe = convex.onUpdate(
+    convexApi.live.getActiveReasoningProgress,
+    {},
+    (payload: LiveReasoningPayload) => {
+      if (!payload.roundId) return;
+      const now = Date.now();
+      for (const entry of payload.entries) {
+        reasoningEstimator.sync(
+          reasoningProgressKey(payload.roundId, entry.requestType, entry.answerIndex),
+          {
+            tokens: entry.estimatedReasoningTokens,
+            updatedAt: entry.updatedAt,
+          },
+          now,
+        );
+      }
+      reasoningEstimator.pruneOlderThan(3 * 60_000, now);
+    },
+    () => {
+      // Ignore transient disconnects; estimator resumes on next payload.
     },
   );
 }
@@ -270,6 +310,45 @@ function parseSkipReason(skipReason?: string): SkipReasonView {
   }
 
   return { modelName, message };
+}
+
+function formatDurationMs(ms: number): string {
+  if (!Number.isFinite(ms) || ms <= 0) return "0ms";
+  if (ms < 1_000) return `${Math.round(ms)}ms`;
+  return `${(ms / 1_000).toFixed(ms >= 10_000 ? 0 : 1)}s`;
+}
+
+function formatInt(value: number): string {
+  if (!Number.isFinite(value)) return "0";
+  return Math.max(0, Math.floor(value)).toLocaleString("pt-BR");
+}
+
+function getTaskDurationMs(task: TaskInfo, nowMs: number): number {
+  if (task.metrics?.durationMsFinal !== undefined) return task.metrics.durationMsFinal;
+  if (task.finishedAt !== undefined) return Math.max(0, task.finishedAt - task.startedAt);
+  return Math.max(0, nowMs - task.startedAt);
+}
+
+function buildFinishedTaskMetricsText(
+  task: TaskInfo,
+  nowMs: number,
+  fallbackReasoningTokens?: number | null,
+): string {
+  const duration = formatDurationMs(getTaskDurationMs(task, nowMs));
+  if (!task.metrics) {
+    const reasoningText =
+      fallbackReasoningTokens === null || fallbackReasoningTokens === undefined
+        ? "N/D"
+        : `~${formatInt(fallbackReasoningTokens)}`;
+    return `Tokens ${reasoningText} | ${duration.toUpperCase()}`;
+  }
+  return `${formatInt(task.metrics.reasoningTokens)} Tokens | ${duration.toUpperCase()}`;
+}
+
+function buildLiveTaskMetricsText(reasoningTokens: number | null, startedAt: number, nowMs: number): string {
+  const elapsed = formatDurationMs(Math.max(0, nowMs - startedAt)).toUpperCase();
+  const reasoning = reasoningTokens === null ? "~0" : `~${formatInt(reasoningTokens)}`;
+  return `${reasoning} Tokens | ${elapsed}`;
 }
 
 function textLines(
@@ -376,7 +455,7 @@ function drawHeader() {
   ctx.fillStyle = "#0a0a0a";
   ctx.fillRect(0, 0, WIDTH, HEIGHT);
 
-  if (brandLogo.complete && brandLogo.naturalHeight !== 0) {
+  if (brandLogo && brandLogo.complete && brandLogo.naturalHeight !== 0) {
     const logoHeight = 60;
     const logoWidth = (brandLogo.naturalWidth / brandLogo.naturalHeight) * logoHeight;
     ctx.drawImage(brandLogo, 48, 44, logoWidth, logoHeight);
@@ -472,13 +551,20 @@ function drawVotingCountdownWidget(
 
 function drawRound(round: RoundState, roundNumber: number) {
   const mainW = WIDTH - 380;
-  const countdown = countdownTracker.compute(round, Date.now());
+  const nowMs = Date.now();
+  const countdown = countdownTracker.compute(round, nowMs);
   const isSkipped = Boolean(round.skipped);
   const skipInfo = isSkipped ? parseSkipReason(round.skipReason) : null;
   const showCountdownWidget = !isSkipped && round.phase === "voting" && Boolean(countdown);
   const phaseRightX = mainW - 64;
   const statusX = phaseRightX - ROUND_STATUS_BOX_W;
   const statusY = ROUND_STATUS_BOX_Y;
+  const roundId = round._id;
+  const promptLiveReasoningTokens =
+    roundId
+      ? reasoningEstimator.get(reasoningProgressKey(roundId, "prompt"), nowMs)
+      : null;
+  const promptMetricsText = buildFinishedTaskMetricsText(round.promptTask, nowMs, promptLiveReasoningTokens);
 
   const phaseLabel =
     (isSkipped
@@ -547,6 +633,20 @@ function drawRound(round: RoundState, roundNumber: number) {
         ? "Gerando prompt..."
         : "Prompt indisponivel");
 
+  if (round.promptTask.finishedAt) {
+    ctx.font = '600 14px "JetBrains Mono", monospace';
+    ctx.fillStyle = "#666";
+    ctx.fillText(promptMetricsText, 80, 238);
+  } else if (round.phase === "prompting") {
+    ctx.font = '600 14px "JetBrains Mono", monospace';
+    ctx.fillStyle = "#555";
+    ctx.fillText(
+      buildLiveTaskMetricsText(promptLiveReasoningTokens, round.promptTask.startedAt, nowMs),
+      80,
+      238,
+    );
+  }
+
   const promptFont = '400 56px "DM Serif Display", serif';
   const promptLineHeight = 72;
   const promptMaxLines = 3;
@@ -554,11 +654,17 @@ function drawRound(round: RoundState, roundNumber: number) {
   const promptMaxWidth = Math.max(560, mainW - 120 - reserveRightForStatus);
   const promptLines = textLines(promptText, promptMaxWidth, promptFont, promptMaxLines);
   const promptTextHeight = promptLines.length * promptLineHeight;
-  const promptBaselineY = 262;
-  const promptBarY = promptBaselineY - 44;
+  const hasPromptMetaLine = round.promptTask.finishedAt || round.phase === "prompting";
+  const promptBaselineY = hasPromptMetaLine ? 292 : 262;
+  const promptMetaBaselineY = 238;
+  const promptBarY = hasPromptMetaLine ? promptMetaBaselineY - 18 : promptBaselineY - 44;
+  const promptBarHeight = Math.max(
+    promptTextHeight + 6,
+    promptTextHeight + (promptBaselineY - promptBarY) - 38,
+  );
 
   ctx.fillStyle = getColor(round.prompter.name, round.prompter.color);
-  ctx.fillRect(64, promptBarY, 4, promptTextHeight + 6);
+  ctx.fillRect(64, promptBarY, 4, promptBarHeight);
 
   drawTextBlock(
     promptText,
@@ -576,8 +682,30 @@ function drawRound(round: RoundState, roundNumber: number) {
     const cardW = (mainW - 160) / 2;
     const cardY = promptBarY + promptTextHeight + 6 + 32;
     const cardH = HEIGHT - cardY - 40;
-    drawContestantCard(taskA, 64, cardY, cardW, cardH, round);
-    drawContestantCard(taskB, 64 + cardW + 32, cardY, cardW, cardH, round);
+    drawContestantCard(
+      taskA,
+      64,
+      cardY,
+      cardW,
+      cardH,
+      round,
+      roundId
+        ? reasoningEstimator.get(reasoningProgressKey(roundId, "answer", 0), nowMs)
+        : null,
+      nowMs,
+    );
+    drawContestantCard(
+      taskB,
+      64 + cardW + 32,
+      cardY,
+      cardW,
+      cardH,
+      round,
+      roundId
+        ? reasoningEstimator.get(reasoningProgressKey(roundId, "answer", 1), nowMs)
+        : null,
+      nowMs,
+    );
   }
 }
 
@@ -588,6 +716,8 @@ function drawContestantCard(
   w: number,
   h: number,
   round: RoundState,
+  liveReasoningTokens: number | null,
+  nowMs: number,
 ) {
   const [a, b] = round.contestants;
   let votesA = 0;
@@ -635,17 +765,28 @@ function drawContestantCard(
       : task.error
         ? task.error
         : task.result ?? "Sem resposta";
+  const metricsText = buildFinishedTaskMetricsText(task, nowMs, liveReasoningTokens);
 
   drawTextBlock(
     task.result ? `"${answer}"` : answer,
     x + 24,
-    y + 120,
+    y + 136,
     w - 48,
     52,
     '400 40px "DM Serif Display", serif',
     isWinner ? "#ededed" : (!task.finishedAt && !task.result ? "#444" : "#888"),
     6,
   );
+
+  if (!task.finishedAt) {
+    ctx.font = '600 13px "JetBrains Mono", monospace';
+    ctx.fillStyle = "#555";
+    ctx.fillText(buildLiveTaskMetricsText(liveReasoningTokens, task.startedAt, nowMs), x + 24, y + 86);
+  } else {
+    ctx.font = '600 13px "JetBrains Mono", monospace';
+    ctx.fillStyle = "#666";
+    ctx.fillText(metricsText, x + 24, y + 86);
+  }
 
   const showVotes = !round.skipped && (round.phase === "voting" || round.phase === "done");
   if (showVotes) {
@@ -725,7 +866,7 @@ function drawWaiting() {
   const mainW = WIDTH - 380;
   ctx.font = '400 48px "DM Serif Display", serif';
   ctx.fillStyle = "#888";
-  const text = "Aguardando estado do jogo...";
+  const text = "Carregando...";
   const tw = ctx.measureText(text).width;
   ctx.fillText(text, (mainW - tw) / 2, HEIGHT / 2);
 }
@@ -788,33 +929,41 @@ function drawDone(
   }
 }
 
-function drawNextPromptNotice(prompter: Model, reserveRightPx = 0) {
+function drawNextPromptNotice(
+  prompter: Model,
+  reserveRightPx = 0,
+  reasoningTokens?: number,
+  thinkingMs?: number,
+) {
   const mainW = WIDTH - 380;
   const rightPadding = 64;
   const y = 72;
   const maxX = mainW - rightPadding - Math.max(0, reserveRightPx);
-  const minX = 300; // Keep clear of the brand at top-left.
+  const minX = 220; // Keep clear of the brand while allowing longer status text.
 
-  const baseSuffix = "esta escrevendo o proximo prompt";
+  const baseSuffix =
+    reasoningTokens === undefined
+      ? "esta escrevendo o proximo prompt"
+      : `esta escrevendo o proximo prompt (~${formatInt(reasoningTokens)} Tokens${thinkingMs !== undefined ? ` | ${formatDurationMs(thinkingMs)}` : ""})`;
   const modelLabel = prompter.name;
 
-  ctx.font = '600 16px "JetBrains Mono", monospace';
-  let suffix = baseSuffix;
-  const maxSuffixWidth = 460;
+  const logoSize = 16;
+  const gap = 8;
   const dotSlot = "...";
-  const dotSlotW = ctx.measureText(dotSlot).width;
-  const maxBaseWidth = Math.max(120, maxSuffixWidth - dotSlotW);
-  while (suffix.length > 3 && ctx.measureText(suffix).width > maxBaseWidth) {
-    suffix = suffix.slice(0, -1);
-  }
-  if (suffix !== baseSuffix) suffix = `${suffix.slice(0, -3)}...`;
-
   ctx.font = '700 18px "Inter", sans-serif';
   const modelW = ctx.measureText(modelLabel).width;
   ctx.font = '600 16px "JetBrains Mono", monospace';
+  const dotSlotW = ctx.measureText(dotSlot).width;
+  const availableSuffixWidth = Math.max(
+    140,
+    maxX - minX - logoSize - gap - modelW - gap - dotSlotW,
+  );
+
+  let suffix = baseSuffix;
+  while (suffix.length > 3 && ctx.measureText(suffix).width > availableSuffixWidth) {
+    suffix = suffix.slice(0, -1);
+  }
   const suffixW = ctx.measureText(suffix).width;
-  const logoSize = 16;
-  const gap = 8;
   const totalW = logoSize + gap + modelW + gap + suffixW + dotSlotW;
   if (maxX <= minX + 40) {
     return;
@@ -861,9 +1010,22 @@ function draw() {
     state.humanVoteTotals ?? {},
     enabledModelNames,
   );
+  const nowMs = Date.now();
+  if (nowMs - lastEstimatorTickAt >= LOCAL_REASONING_TICK_MS) {
+    reasoningEstimator.tick(nowMs);
+    lastEstimatorTickAt = nowMs;
+  }
   
   const isNextPrompting = state.active?.phase === "prompting" && !state.active.prompt;
   const displayRound = isNextPrompting && state.lastCompleted ? state.lastCompleted : (state.active ?? state.lastCompleted ?? null);
+  const nextPromptReasoningTokens =
+    isNextPrompting && state.active?._id
+      ? reasoningEstimator.get(reasoningProgressKey(state.active._id, "prompt"), nowMs)
+      : null;
+  const nextPromptThinkingMs =
+    isNextPrompting && state.active?.promptTask
+      ? Math.max(0, nowMs - state.active.promptTask.startedAt)
+      : undefined;
 
   if (state.done) {
     drawDone(
@@ -876,7 +1038,12 @@ function draw() {
     drawRound(displayRound, state.completedRounds ?? 0);
     if (isNextPrompting && state.lastCompleted && state.active) {
       const reserveRightPx = displayRound.skipped ? ROUND_STATUS_PROMPT_RESERVE : 0;
-      drawNextPromptNotice(state.active.prompter, reserveRightPx);
+      drawNextPromptNotice(
+        state.active.prompter,
+        reserveRightPx,
+        nextPromptReasoningTokens ?? undefined,
+        nextPromptThinkingMs,
+      );
     }
   } else {
     drawWaiting();
@@ -957,6 +1124,7 @@ renderLoop();
 
 window.addEventListener("beforeunload", () => {
   liveUnsubscribe?.unsubscribe();
+  reasoningUnsubscribe?.unsubscribe();
   void convex.close();
 });
 

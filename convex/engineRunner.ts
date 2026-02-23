@@ -12,7 +12,7 @@ import {
   sleep,
   shuffle,
 } from "./constants";
-import { callGenerateAnswer, callGeneratePrompt, callVote } from "./ai";
+import { callGenerateAnswer, callGeneratePrompt, callVote, type LlmCallMetrics } from "./ai";
 
 function pickRoundModels(models: Model[]): {
   prompter: Model;
@@ -48,6 +48,61 @@ async function withLeaseHeartbeat<T>(ctx: any, leaseId: string, fn: () => Promis
   } finally {
     clearInterval(timer);
   }
+}
+
+function toTaskMetrics(metrics?: LlmCallMetrics) {
+  if (!metrics) return undefined;
+  return {
+    generationId: metrics.generationId,
+    costUsd: metrics.costUsd,
+    promptTokens: metrics.promptTokens,
+    completionTokens: metrics.completionTokens,
+    totalTokens: metrics.totalTokens,
+    reasoningTokens: metrics.reasoningTokens,
+    durationMsLocal: metrics.durationMsLocal,
+    durationMsFinal: metrics.durationMsFinal,
+    durationSource: metrics.durationSource,
+    recordedAt: metrics.recordedAt,
+  };
+}
+
+async function recordUsageIfAvailable(
+  ctx: any,
+  args: {
+    generation: number;
+    roundId: any;
+    roundNum: number;
+    requestType: "prompt" | "answer" | "vote";
+    answerIndex?: number;
+    voteIndex?: number;
+    model: Model;
+    metrics?: LlmCallMetrics;
+  },
+) {
+  if (!args.metrics) return;
+
+  await ctx.runMutation(convexInternal.usage.recordLlmUsageEvent, {
+    generation: args.generation,
+    roundId: args.roundId,
+    roundNum: args.roundNum,
+    requestType: args.requestType,
+    answerIndex: args.answerIndex,
+    voteIndex: args.voteIndex,
+    modelId: args.model.id,
+    modelName: args.model.name,
+    modelMetricsEpoch: Number.isFinite(args.model.metricsEpoch) ? args.model.metricsEpoch : 1,
+    generationId: args.metrics.generationId,
+    costUsd: args.metrics.costUsd,
+    promptTokens: args.metrics.promptTokens,
+    completionTokens: args.metrics.completionTokens,
+    totalTokens: args.metrics.totalTokens,
+    reasoningTokens: args.metrics.reasoningTokens,
+    durationMsLocal: args.metrics.durationMsLocal,
+    durationMsFinal: args.metrics.durationMsFinal,
+    durationSource: args.metrics.durationSource,
+    startedAt: args.metrics.startedAt,
+    finishedAt: args.metrics.finishedAt,
+  });
 }
 
 export const runLoop = internalAction({
@@ -108,20 +163,58 @@ export const runLoop = internalAction({
     }
 
     const roundId = created.roundId;
+    const roundNum = created.num;
+    let promptReasoningEstimate = 0;
 
     try {
-      const prompt = await withLeaseHeartbeat(ctx, args.leaseId, async () => {
-        return await callGeneratePrompt(prompter);
+      await ctx.runMutation(convexInternal.usage.upsertLiveReasoningProgress, {
+        generation: expectedGeneration,
+        roundId,
+        requestType: "prompt",
+        modelId: prompter.id,
+        estimatedReasoningTokens: 0,
+      });
+
+      const promptResult = await withLeaseHeartbeat(ctx, args.leaseId, async () => {
+        return await callGeneratePrompt(prompter, async (estimatedReasoningTokens, finalized) => {
+          promptReasoningEstimate = estimatedReasoningTokens;
+          if (!(await leaseStillValid(ctx, args.leaseId, expectedGeneration))) return;
+          await ctx.runMutation(convexInternal.usage.upsertLiveReasoningProgress, {
+            generation: expectedGeneration,
+            roundId,
+            requestType: "prompt",
+            modelId: prompter.id,
+            estimatedReasoningTokens,
+            finalized,
+          });
+        });
       });
       if (!(await leaseStillValid(ctx, args.leaseId, expectedGeneration))) return null;
 
       await ctx.runMutation(convexInternal.engine.setPromptResult, {
         expectedGeneration,
         roundId,
-        prompt,
+        prompt: promptResult.text,
+        metrics: toTaskMetrics(promptResult.metrics),
+      });
+      await recordUsageIfAvailable(ctx, {
+        generation: expectedGeneration,
+        roundId,
+        roundNum,
+        requestType: "prompt",
+        model: prompter,
+        metrics: promptResult.metrics,
       });
     } catch {
       if (!(await leaseStillValid(ctx, args.leaseId, expectedGeneration))) return null;
+
+      await ctx.runMutation(convexInternal.usage.finalizeLiveReasoningProgress, {
+        generation: expectedGeneration,
+        roundId,
+        requestType: "prompt",
+        modelId: prompter.id,
+        estimatedReasoningTokens: promptReasoningEstimate,
+      });
 
       await ctx.runMutation(convexInternal.engine.setPromptError, {
         expectedGeneration,
@@ -148,24 +241,73 @@ export const runLoop = internalAction({
       return null;
     }
 
+    const answerReasoningEstimates = [0, 0];
+    await Promise.all(
+      contestants.map(async (contestant, answerIndex) => {
+        await ctx.runMutation(convexInternal.usage.upsertLiveReasoningProgress, {
+          generation: expectedGeneration,
+          roundId,
+          requestType: "answer",
+          answerIndex,
+          modelId: contestant.id,
+          estimatedReasoningTokens: 0,
+        });
+      }),
+    );
+
     await withLeaseHeartbeat(ctx, args.leaseId, async () => {
       await Promise.all(
         contestants.map(async (contestant, answerIndex) => {
           try {
-            const result = await callGenerateAnswer(contestant, currentRound.prompt as string);
+            const result = await callGenerateAnswer(
+              contestant,
+              currentRound.prompt as string,
+              async (estimatedReasoningTokens, finalized) => {
+                answerReasoningEstimates[answerIndex] = estimatedReasoningTokens;
+                if (!(await leaseStillValid(ctx, args.leaseId, expectedGeneration))) return;
+                await ctx.runMutation(convexInternal.usage.upsertLiveReasoningProgress, {
+                  generation: expectedGeneration,
+                  roundId,
+                  requestType: "answer",
+                  answerIndex,
+                  modelId: contestant.id,
+                  estimatedReasoningTokens,
+                  finalized,
+                });
+              },
+            );
             if (!(await leaseStillValid(ctx, args.leaseId, expectedGeneration))) return;
             await ctx.runMutation(convexInternal.engine.setAnswerResult, {
               expectedGeneration,
               roundId,
               answerIndex,
-              result,
+              result: result.text,
+              metrics: toTaskMetrics(result.metrics),
+            });
+            await recordUsageIfAvailable(ctx, {
+              generation: expectedGeneration,
+              roundId,
+              roundNum,
+              requestType: "answer",
+              answerIndex,
+              model: contestant,
+              metrics: result.metrics,
             });
           } catch (error) {
             const message =
               error instanceof Error && /timeout|timed out|abort/i.test(error.message)
-                ? "Timed out (45s)"
+                ? "Tempo esgotado (60s)"
                 : "Failed to answer";
             if (!(await leaseStillValid(ctx, args.leaseId, expectedGeneration))) return;
+
+            await ctx.runMutation(convexInternal.usage.finalizeLiveReasoningProgress, {
+              generation: expectedGeneration,
+              roundId,
+              requestType: "answer",
+              answerIndex,
+              modelId: contestant.id,
+              estimatedReasoningTokens: answerReasoningEstimates[answerIndex] ?? 0,
+            });
             await ctx.runMutation(convexInternal.engine.setAnswerResult, {
               expectedGeneration,
               roundId,
@@ -228,10 +370,10 @@ export const runLoop = internalAction({
             if (!(await leaseStillValid(ctx, args.leaseId, expectedGeneration))) return;
 
             const votedForSide: "A" | "B" = showAFirst
-              ? result === "A"
+              ? result.vote === "A"
                 ? "A"
                 : "B"
-              : result === "A"
+              : result.vote === "A"
                 ? "B"
                 : "A";
 
@@ -240,6 +382,15 @@ export const runLoop = internalAction({
               roundId,
               voteIndex,
               side: votedForSide,
+            });
+            await recordUsageIfAvailable(ctx, {
+              generation: expectedGeneration,
+              roundId,
+              roundNum,
+              requestType: "vote",
+              voteIndex,
+              model: voter,
+              metrics: result.metrics,
             });
           } catch {
             if (!(await leaseStillValid(ctx, args.leaseId, expectedGeneration))) return;

@@ -1,11 +1,25 @@
 import type { Model, ModelCatalogEntry } from "./models";
 
+export type TaskMetrics = {
+  generationId: string;
+  costUsd: number;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  reasoningTokens: number;
+  durationMsLocal: number;
+  durationMsFinal: number;
+  durationSource: "openrouter_latency" | "openrouter_generation_time" | "local";
+  recordedAt: number;
+};
+
 export type TaskInfo = {
   model: Model;
   startedAt: number;
   finishedAt?: number;
   result?: string;
   error?: string;
+  metrics?: TaskMetrics;
 };
 
 export type VoteInfo = {
@@ -67,4 +81,13 @@ export type AdminSnapshot = {
   canRunRounds: boolean;
   runBlockedReason: "insufficient_active_models" | null;
   enabledModelIds: string[];
+};
+
+export type ActiveReasoningProgressItem = {
+  requestType: "prompt" | "answer";
+  answerIndex?: number;
+  modelId: string;
+  estimatedReasoningTokens: number;
+  updatedAt: number;
+  finalized: boolean;
 };

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+﻿import React, { useState, useEffect } from "react";
 import { createRoot } from "react-dom/client";
 import { ConvexProvider, ConvexReactClient, useMutation, useQuery } from "convex/react";
 import { api } from "./convex/_generated/api";
@@ -8,18 +8,21 @@ import {
   normalizeHexColor,
   type ModelCatalogEntry,
 } from "./shared/models";
+import {
+  ReasoningProgressEstimator,
+  reasoningProgressKey,
+} from "./shared/reasoningEstimator";
+import type {
+  ActiveReasoningProgressItem,
+  GameState,
+  RoundState,
+  TaskInfo,
+} from "./shared/types";
 import "./frontend.css";
 
 // â”€â”€ Types â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-type Model = { id: string; name: string; color?: string; logoId?: string };
-type TaskInfo = {
-  model: Model;
-  startedAt: number;
-  finishedAt?: number;
-  result?: string;
-  error?: string;
-};
+type Model = TaskInfo["model"];
 type VoteInfo = {
   voter: Model;
   startedAt: number;
@@ -27,51 +30,6 @@ type VoteInfo = {
   votedFor?: Model;
   error?: boolean;
 };
-type RoundState = {
-  _id?: string;
-  num: number;
-  phase: "prompting" | "answering" | "voting" | "done";
-  skipped?: boolean;
-  skipReason?: string;
-  skipType?: "prompt_error" | "answer_error";
-  prompter: Model;
-  promptTask: TaskInfo;
-  prompt?: string;
-  contestants: [Model, Model];
-  answerTasks: [TaskInfo, TaskInfo];
-  votes: VoteInfo[];
-  scoreA?: number;
-  scoreB?: number;
-  viewerVotesA?: number;
-  viewerVotesB?: number;
-  viewerVotingEndsAt?: number;
-};
-type GameState = {
-  lastCompleted: RoundState | null;
-  active: RoundState | null;
-  scores: Record<string, number>;
-  humanScores: Record<string, number>;
-  humanVoteTotals: Record<string, number>;
-  models: ModelCatalogEntry[];
-  enabledModelIds: string[];
-  done: boolean;
-  isPaused: boolean;
-  generation: number;
-  completedRounds: number;
-};
-type StateMessage = {
-  type: "state";
-  data: GameState;
-  totalRounds: number;
-  viewerCount: number;
-  version?: string;
-};
-type ViewerCountMessage = {
-  type: "viewerCount";
-  viewerCount: number;
-};
-type VotedAckMessage = { type: "votedAck"; votedFor: "A" | "B" };
-type ServerMessage = StateMessage | ViewerCountMessage | VotedAckMessage;
 
 // â”€â”€ Model colors & logos â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
@@ -195,6 +153,45 @@ function parseSkipReason(skipReason?: string): SkipReasonView {
   return { modelName, message };
 }
 
+function formatDurationMs(ms: number): string {
+  if (!Number.isFinite(ms) || ms <= 0) return "0ms";
+  if (ms < 1_000) return `${Math.round(ms)}ms`;
+  return `${(ms / 1_000).toFixed(ms >= 10_000 ? 0 : 1)}s`;
+}
+
+function formatInt(value: number): string {
+  if (!Number.isFinite(value)) return "0";
+  return Math.max(0, Math.floor(value)).toLocaleString("pt-BR");
+}
+
+function getTaskDurationMs(task: TaskInfo, nowMs: number): number {
+  if (task.metrics?.durationMsFinal !== undefined) return task.metrics.durationMsFinal;
+  if (task.finishedAt !== undefined) return Math.max(0, task.finishedAt - task.startedAt);
+  return Math.max(0, nowMs - task.startedAt);
+}
+
+function buildFinishedTaskMetricsText(
+  task: TaskInfo,
+  nowMs: number,
+  fallbackReasoningTokens?: number | null,
+): string {
+  const duration = formatDurationMs(getTaskDurationMs(task, nowMs));
+  if (!task.metrics) {
+    const reasoningText =
+      fallbackReasoningTokens === null || fallbackReasoningTokens === undefined
+        ? "N/D"
+        : `~${formatInt(fallbackReasoningTokens)}`;
+    return `Tokens ${reasoningText} | ${duration}`;
+  }
+  return `${formatInt(task.metrics.reasoningTokens)} Tokens | ${duration}`;
+}
+
+function buildLiveTaskMetricsText(reasoningTokens: number | null, startedAt: number, nowMs: number): string {
+  const elapsed = formatDurationMs(Math.max(0, nowMs - startedAt));
+  const reasoning = reasoningTokens === null ? "~0" : `~${formatInt(reasoningTokens)}`;
+  return `${reasoning} Tokens | ${elapsed}`;
+}
+
 const convex = new ConvexReactClient(getConvexUrl());
 const convexApi = api as any;
 
@@ -226,13 +223,26 @@ function ModelTag({ model, small }: { model: Model; small?: boolean }) {
 
 // â”€â”€ Prompt â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-function PromptCard({ round }: { round: RoundState }) {
+function PromptCard({
+  round,
+  liveReasoningTokens,
+  nowMs,
+}: {
+  round: RoundState;
+  liveReasoningTokens: number | null;
+  nowMs: number;
+}) {
+  const promptMetricsText = buildFinishedTaskMetricsText(round.promptTask, nowMs, liveReasoningTokens);
+
   if (round.phase === "prompting" && !round.prompt) {
     return (
       <div className="prompt">
         <div className="prompt__by">
           <ModelTag model={round.prompter} small /> esta escrevendo um prompt
           <Dots />
+        </div>
+        <div className="task-metrics task-metrics--live">
+          {buildLiveTaskMetricsText(liveReasoningTokens, round.promptTask.startedAt, nowMs)}
         </div>
         <div className="prompt__text prompt__text--loading">
           <Dots />
@@ -256,6 +266,7 @@ function PromptCard({ round }: { round: RoundState }) {
       <div className="prompt__by">
         Prompt de <ModelTag model={round.prompter} small />
       </div>
+      <div className="task-metrics">{promptMetricsText}</div>
       <div className="prompt__text">{round.prompt}</div>
     </div>
   );
@@ -265,6 +276,8 @@ function PromptCard({ round }: { round: RoundState }) {
 
 function ContestantCard({
   task,
+  liveReasoningTokens,
+  nowMs,
   voteCount,
   totalVotes,
   isWinner,
@@ -277,6 +290,8 @@ function ContestantCard({
   isMyVote,
 }: {
   task: TaskInfo;
+  liveReasoningTokens: number | null;
+  nowMs: number;
   voteCount: number;
   totalVotes: number;
   isWinner: boolean;
@@ -294,6 +309,7 @@ function ContestantCard({
   const viewerPct = showViewerVotes && totalViewerVotes > 0
     ? Math.round(((viewerVotes ?? 0) / totalViewerVotes) * 100)
     : 0;
+  const answerMetricsText = buildFinishedTaskMetricsText(task, nowMs, liveReasoningTokens);
 
   return (
     <div
@@ -312,13 +328,24 @@ function ContestantCard({
 
       <div className="contestant__body">
         {!task.finishedAt ? (
-          <p className="answer answer--loading">
-            <Dots />
-          </p>
+          <>
+            <p className="answer answer--loading">
+              <Dots />
+            </p>
+            <div className="task-metrics task-metrics--live">
+              {buildLiveTaskMetricsText(liveReasoningTokens, task.startedAt, nowMs)}
+            </div>
+          </>
         ) : task.error ? (
-          <p className="answer answer--error">{task.error}</p>
+          <>
+            <p className="answer answer--error">{task.error}</p>
+            <div className="task-metrics">{answerMetricsText}</div>
+          </>
         ) : (
-          <p className="answer">&ldquo;{task.result}&rdquo;</p>
+          <>
+            <p className="answer">&ldquo;{task.result}&rdquo;</p>
+            <div className="task-metrics">{answerMetricsText}</div>
+          </>
         )}
       </div>
 
@@ -393,11 +420,17 @@ function Arena({
   roundNumber,
   total,
   votingCountdown,
+  promptLiveReasoningTokens,
+  answerLiveReasoningTokens,
+  nowMs,
 }: {
   round: RoundState;
   roundNumber: number;
   total: number | null;
   votingCountdown: VotingCountdownView | null;
+  promptLiveReasoningTokens: number | null;
+  answerLiveReasoningTokens: [number | null, number | null];
+  nowMs: number;
 }) {
   const [contA, contB] = round.contestants;
   const isSkipped = Boolean(round.skipped);
@@ -414,6 +447,7 @@ function Arena({
   const votersA = round.votes.filter((v) => v.votedFor?.name === contA.name);
   const votersB = round.votes.filter((v) => v.votedFor?.name === contB.name);
   const totalViewerVotes = (round.viewerVotesA ?? 0) + (round.viewerVotesB ?? 0);
+  const [answerALiveReasoningTokens, answerBLiveReasoningTokens] = answerLiveReasoningTokens;
 
   const showCountdown = round.phase === "voting" && Boolean(votingCountdown);
   const skipInfo = isSkipped ? parseSkipReason(round.skipReason) : null;
@@ -450,18 +484,14 @@ function Arena({
 
       {/* Countdown and skip notice stay attached to header meta-right, not floating in content */}
 
-      <PromptCard round={round} />
-
-      {round.phase === "voting" && (
-        <div className="chat-vote-hint">
-          Vote no chat: <strong>1</strong> para esquerda, <strong>2</strong> para direita
-        </div>
-      )}
+      <PromptCard round={round} liveReasoningTokens={promptLiveReasoningTokens} nowMs={nowMs} />
 
       {round.phase !== "prompting" && round.skipType !== "prompt_error" && (
         <div className="showdown">
           <ContestantCard
             task={round.answerTasks[0]}
+            liveReasoningTokens={answerALiveReasoningTokens}
+            nowMs={nowMs}
             voteCount={votesA}
             totalVotes={totalVotes}
             isWinner={isDone && !isSkipped && votesA > votesB}
@@ -472,6 +502,8 @@ function Arena({
           />
           <ContestantCard
             task={round.answerTasks[1]}
+            liveReasoningTokens={answerBLiveReasoningTokens}
+            nowMs={nowMs}
             voteCount={votesB}
             totalVotes={totalVotes}
             isWinner={isDone && !isSkipped && votesB > votesA}
@@ -688,10 +720,19 @@ function App() {
   const [nowMs, setNowMs] = useState(() => Date.now());
   const viewerIdRef = React.useRef<string | null>(null);
   const countdownTrackerRef = React.useRef(createVotingCountdownTracker());
+  const reasoningEstimatorRef = React.useRef(
+    new ReasoningProgressEstimator({
+      syncBlendMs: 320,
+      maxExtrapolationMs: 1_600,
+    }),
+  );
   const ghostViewer = React.useMemo(() => isGhostViewer(), []);
 
   const liveState = useQuery(convexApi.live.getState, {}) as
     | { data: GameState; totalRounds: number | null; viewerCount: number }
+    | undefined;
+  const liveReasoning = useQuery(convexApi.live.getActiveReasoningProgress, {}) as
+    | { roundId: string | null; entries: ActiveReasoningProgressItem[] }
     | undefined;
   const ensureStarted = useMutation(convexApi.live.ensureStarted);
   const heartbeat = useMutation(convexApi.viewers.heartbeat);
@@ -709,13 +750,34 @@ function App() {
     () => getEnabledModelNames(catalogModels),
     [catalogModels],
   );
+  const isGeneratingActive = Boolean(
+    state?.active && (state.active.phase === "prompting" || state.active.phase === "answering"),
+  );
 
   useEffect(() => {
+    const estimator = reasoningEstimatorRef.current;
+    if (!liveReasoning?.roundId) return;
+    const now = Date.now();
+    for (const entry of liveReasoning.entries) {
+      estimator.sync(
+        reasoningProgressKey(liveReasoning.roundId, entry.requestType, entry.answerIndex),
+        {
+          tokens: entry.estimatedReasoningTokens,
+          updatedAt: entry.updatedAt,
+        },
+        now,
+      );
+    }
+    estimator.pruneOlderThan(3 * 60_000, now);
+  }, [liveReasoning]);
+
+  useEffect(() => {
+    const intervalMs = isGeneratingActive ? 50 : 1_000;
     const interval = setInterval(() => {
       setNowMs(Date.now());
-    }, 1_000);
+    }, intervalMs);
     return () => clearInterval(interval);
-  }, []);
+  }, [isGeneratingActive]);
 
   useEffect(() => {
     const viewerId = getOrCreateViewerId();
@@ -737,7 +799,19 @@ function App() {
 
   if (!liveState || !state) return <ConnectingScreen />;
 
+  reasoningEstimatorRef.current.tick(nowMs);
   const votingCountdown = countdownTrackerRef.current.compute(state.active, nowMs);
+  const getLiveReasoningEstimate = (
+    roundId: string | undefined,
+    requestType: "prompt" | "answer",
+    answerIndex?: number,
+  ) => {
+    if (!roundId) return null;
+    return reasoningEstimatorRef.current.get(
+      reasoningProgressKey(roundId, requestType, answerIndex),
+      nowMs,
+    );
+  };
 
   const isNextPrompting =
     state.active?.phase === "prompting" && !state.active.prompt;
@@ -745,6 +819,25 @@ function App() {
     isNextPrompting && state.lastCompleted
       ? state.lastCompleted
       : (state.active ?? state.lastCompleted ?? null);
+  const displayRoundId = displayRound?._id;
+  const promptLiveReasoningTokens =
+    displayRound
+      ? getLiveReasoningEstimate(displayRoundId, "prompt")
+      : null;
+  const answerLiveReasoningTokens: [number | null, number | null] = displayRound
+    ? [
+        getLiveReasoningEstimate(displayRoundId, "answer", 0),
+        getLiveReasoningEstimate(displayRoundId, "answer", 1),
+      ]
+    : [null, null];
+  const nextPromptReasoningTokens =
+    isNextPrompting && state.active?._id
+      ? getLiveReasoningEstimate(state.active._id, "prompt")
+      : null;
+  const nextPromptThinkingMs =
+    isNextPrompting && state.active?.promptTask
+      ? Math.max(0, nowMs - state.active.promptTask.startedAt)
+      : null;
 
   return (
     <div className="app">
@@ -783,6 +876,9 @@ function App() {
               roundNumber={completedRounds}
               total={totalRounds}
               votingCountdown={votingCountdown}
+              promptLiveReasoningTokens={promptLiveReasoningTokens}
+              answerLiveReasoningTokens={answerLiveReasoningTokens}
+              nowMs={nowMs}
             />
           ) : (
             <div className="waiting">
@@ -795,6 +891,12 @@ function App() {
             <div className="next-toast">
               <ModelTag model={state.active!.prompter} small /> esta escrevendo o
               proximo prompt
+              {nextPromptReasoningTokens !== null && (
+                <span className="next-toast__metrics">
+                  ~{formatInt(nextPromptReasoningTokens)} Tokens
+                  {nextPromptThinkingMs !== null ? ` | ${formatDurationMs(nextPromptThinkingMs)}` : ""}
+                </span>
+              )}
               <Dots />
             </div>
           )}

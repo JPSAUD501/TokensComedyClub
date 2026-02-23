@@ -55,6 +55,7 @@ export type Model = {
   color?: string;
   logoId?: ModelLogoId;
   reasoningEffort?: ModelReasoningEffort;
+  metricsEpoch?: number;
 };
 
 export type ModelCatalogEntry = {
@@ -64,6 +65,7 @@ export type ModelCatalogEntry = {
   color: string;
   logoId: ModelLogoId;
   reasoningEffort: ModelReasoningEffort;
+  metricsEpoch: number;
   enabled: boolean;
   archivedAt?: number;
   createdAt?: number;
@@ -106,7 +108,10 @@ export function normalizeHexColor(input?: string | null): string {
 }
 
 export function toRuntimeModel(
-  entry: Pick<ModelCatalogEntry, "modelId" | "name" | "color" | "logoId" | "reasoningEffort">,
+  entry: Pick<
+    ModelCatalogEntry,
+    "modelId" | "name" | "color" | "logoId" | "reasoningEffort" | "metricsEpoch"
+  >,
 ): Model {
   return {
     id: entry.modelId,
@@ -114,5 +119,6 @@ export function toRuntimeModel(
     color: normalizeHexColor(entry.color),
     logoId: entry.logoId,
     reasoningEffort: normalizeModelReasoningEffort(entry.reasoningEffort),
+    metricsEpoch: Number.isFinite(entry.metricsEpoch) ? entry.metricsEpoch : 1,
   };
 }

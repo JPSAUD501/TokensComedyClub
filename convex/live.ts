@@ -209,3 +209,35 @@ export const ensureStartedInternal = internalMutation({
   },
 });
 
+export const getActiveReasoningProgress = query({
+  args: {},
+  returns: v.object({
+    roundId: v.union(v.id("rounds"), v.null()),
+    entries: v.array(v.any()),
+  }),
+  handler: async (ctx) => {
+    const state = await getEngineState(ctx as any);
+    if (!state?.activeRoundId) {
+      return {
+        roundId: null,
+        entries: [],
+      };
+    }
+
+    const entries = await ctx.db
+      .query("liveReasoningProgress")
+      .withIndex("by_generation_round", (q: any) =>
+        q.eq("generation", state.generation).eq("roundId", state.activeRoundId),
+      )
+      .collect();
+
+    return {
+      roundId: state.activeRoundId,
+      entries: entries.sort((a: any, b: any) => {
+        if (a.requestType !== b.requestType) return a.requestType.localeCompare(b.requestType);
+        return (a.answerIndex ?? -1) - (b.answerIndex ?? -1);
+      }),
+    };
+  },
+});
+

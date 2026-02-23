@@ -21,6 +21,19 @@ body {
   image-rendering: auto;
 }
 
+#broadcast-brand-logo-source {
+  position: fixed;
+  left: 0;
+  top: 0;
+  height: 72px;
+  width: auto;
+  opacity: 0.001;
+  z-index: -1;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
 #broadcast-status {
   display: none;
   position: fixed;

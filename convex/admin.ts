@@ -294,6 +294,16 @@ export const reset = internalMutation({
       cursor: undefined,
       numItems: 500,
     });
+    await ctx.scheduler.runAfter(0, convexInternal.admin.purgeGenerationUsageEventBatch, {
+      generation: oldGeneration,
+      cursor: undefined,
+      numItems: 500,
+    });
+    await ctx.scheduler.runAfter(0, convexInternal.admin.purgeGenerationReasoningProgressBatch, {
+      generation: oldGeneration,
+      cursor: undefined,
+      numItems: 500,
+    });
 
     return { generation: nextGeneration };
   },
@@ -427,6 +437,64 @@ export const purgeGenerationTalliesBatch = internalMutation({
 
     if (!result.isDone) {
       await ctx.scheduler.runAfter(0, convexInternal.admin.purgeGenerationTalliesBatch, {
+        generation: args.generation,
+        cursor: result.continueCursor,
+        numItems: args.numItems,
+      });
+    }
+
+    return null;
+  },
+});
+
+export const purgeGenerationUsageEventBatch = internalMutation({
+  args: {
+    generation: v.number(),
+    cursor: v.optional(v.string()),
+    numItems: v.number(),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const result = await ctx.db
+      .query("llmUsageEvents")
+      .withIndex("by_generation", (q: any) => q.eq("generation", args.generation))
+      .paginate({ cursor: args.cursor ?? null, numItems: args.numItems });
+
+    for (const row of result.page) {
+      await ctx.db.delete(row._id);
+    }
+
+    if (!result.isDone) {
+      await ctx.scheduler.runAfter(0, convexInternal.admin.purgeGenerationUsageEventBatch, {
+        generation: args.generation,
+        cursor: result.continueCursor,
+        numItems: args.numItems,
+      });
+    }
+
+    return null;
+  },
+});
+
+export const purgeGenerationReasoningProgressBatch = internalMutation({
+  args: {
+    generation: v.number(),
+    cursor: v.optional(v.string()),
+    numItems: v.number(),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const result = await ctx.db
+      .query("liveReasoningProgress")
+      .withIndex("by_generation", (q: any) => q.eq("generation", args.generation))
+      .paginate({ cursor: args.cursor ?? null, numItems: args.numItems });
+
+    for (const row of result.page) {
+      await ctx.db.delete(row._id);
+    }
+
+    if (!result.isDone) {
+      await ctx.scheduler.runAfter(0, convexInternal.admin.purgeGenerationReasoningProgressBatch, {
         generation: args.generation,
         cursor: result.continueCursor,
         numItems: args.numItems,

@@ -18,7 +18,7 @@ export type RunBlockedReason = "insufficient_active_models" | null;
 
 type SeedModel = Pick<
   ModelCatalogEntry,
-  "modelId" | "name" | "color" | "logoId" | "reasoningEffort" | "enabled"
+  "modelId" | "name" | "color" | "logoId" | "reasoningEffort" | "enabled" | "metricsEpoch"
 >;
 
 const reasoningEffortValidator = v.union(
@@ -37,6 +37,7 @@ const LEGACY_MODEL_SEED: SeedModel[] = [
     color: "#4285F4",
     logoId: "gemini",
     reasoningEffort: "medium",
+    metricsEpoch: 1,
     enabled: true,
   },
   {
@@ -45,6 +46,7 @@ const LEGACY_MODEL_SEED: SeedModel[] = [
     color: "#00E599",
     logoId: "kimi",
     reasoningEffort: "medium",
+    metricsEpoch: 1,
     enabled: true,
   },
   {
@@ -53,6 +55,7 @@ const LEGACY_MODEL_SEED: SeedModel[] = [
     color: "#4D6BFE",
     logoId: "deepseek",
     reasoningEffort: "medium",
+    metricsEpoch: 1,
     enabled: true,
   },
   {
@@ -61,6 +64,7 @@ const LEGACY_MODEL_SEED: SeedModel[] = [
     color: "#FF3B30",
     logoId: "minimax",
     reasoningEffort: "medium",
+    metricsEpoch: 1,
     enabled: true,
   },
   {
@@ -69,6 +73,7 @@ const LEGACY_MODEL_SEED: SeedModel[] = [
     color: "#1F63EC",
     logoId: "glm",
     reasoningEffort: "medium",
+    metricsEpoch: 1,
     enabled: true,
   },
   {
@@ -77,6 +82,7 @@ const LEGACY_MODEL_SEED: SeedModel[] = [
     color: "#10A37F",
     logoId: "openai",
     reasoningEffort: "medium",
+    metricsEpoch: 1,
     enabled: true,
   },
   {
@@ -85,6 +91,7 @@ const LEGACY_MODEL_SEED: SeedModel[] = [
     color: "#D97757",
     logoId: "claude",
     reasoningEffort: "medium",
+    metricsEpoch: 1,
     enabled: true,
   },
   {
@@ -93,6 +100,7 @@ const LEGACY_MODEL_SEED: SeedModel[] = [
     color: "#FFFFFF",
     logoId: "grok",
     reasoningEffort: "medium",
+    metricsEpoch: 1,
     enabled: true,
   },
 ];
@@ -115,6 +123,7 @@ function toCatalogEntry(row: any): ModelCatalogEntry {
     color: normalizeHexColor(row.color),
     logoId: row.logoId,
     reasoningEffort: normalizeModelReasoningEffort(row.reasoningEffort),
+    metricsEpoch: Number.isFinite(row.metricsEpoch) ? row.metricsEpoch : 1,
     enabled: Boolean(row.enabled),
     archivedAt: row.archivedAt,
     createdAt: row.createdAt,
@@ -167,7 +176,16 @@ async function syncEngineEnabledModelIds(ctx: { db: any }, models: ModelCatalogE
 export async function ensureModelCatalogSeededImpl(ctx: { db: any }): Promise<ModelCatalogEntry[]> {
   const existing = await ctx.db.query("models").collect();
   if (existing.length > 0) {
-    return sortCatalog(existing.map(toCatalogEntry));
+    const now = Date.now();
+    await Promise.all(
+      existing.map(async (row: any) => {
+        if (!Number.isFinite(row.metricsEpoch)) {
+          await ctx.db.patch(row._id, { metricsEpoch: 1, updatedAt: now });
+        }
+      }),
+    );
+    const updated = await ctx.db.query("models").collect();
+    return sortCatalog(updated.map(toCatalogEntry));
   }
 
   const now = Date.now();
@@ -178,6 +196,7 @@ export async function ensureModelCatalogSeededImpl(ctx: { db: any }): Promise<Mo
       color: model.color,
       logoId: model.logoId,
       reasoningEffort: model.reasoningEffort,
+      metricsEpoch: model.metricsEpoch,
       enabled: model.enabled,
       createdAt: now,
       updatedAt: now,
@@ -237,6 +256,7 @@ export const listActiveForRuntime = internalQuery({
       color: v.optional(v.string()),
       logoId: v.optional(v.string()),
       reasoningEffort: v.optional(reasoningEffortValidator),
+      metricsEpoch: v.optional(v.number()),
     }),
   ),
   handler: async (ctx) => {
@@ -294,6 +314,9 @@ export const createModel = internalMutation({
         color: normalizeHexColor(color),
         logoId,
         reasoningEffort,
+        metricsEpoch: Number.isFinite(existingById.metricsEpoch)
+          ? existingById.metricsEpoch
+          : 1,
         enabled: args.enabled ?? true,
         archivedAt: undefined,
         updatedAt: now,
@@ -308,6 +331,7 @@ export const createModel = internalMutation({
         color: normalizeHexColor(color),
         logoId,
         reasoningEffort,
+        metricsEpoch: 1,
         enabled: args.enabled ?? true,
         createdAt: now,
         updatedAt: now,
@@ -459,6 +483,9 @@ export const updateModel = internalMutation({
     if (existingByName && existingByName._id !== existing._id) {
       throw new Error("Nome ja esta em uso.");
     }
+    const currentEpoch = Number.isFinite(existing.metricsEpoch)
+      ? Number(existing.metricsEpoch)
+      : 1;
 
     await ctx.db.patch(existing._id, {
       modelId,
@@ -466,6 +493,10 @@ export const updateModel = internalMutation({
       color: normalizeHexColor(color),
       logoId,
       reasoningEffort,
+      metricsEpoch:
+        modelId !== existing.modelId || reasoningEffort !== normalizeModelReasoningEffort(existing.reasoningEffort)
+          ? currentEpoch + 1
+          : currentEpoch,
       enabled: args.enabled,
       updatedAt: Date.now(),
     });

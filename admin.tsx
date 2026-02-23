@@ -37,7 +37,26 @@ type ViewerTarget = {
 
 type AdminResponse = { ok: true } & AdminSnapshot;
 type ViewerTargetsResponse = { ok: true; targets: ViewerTarget[] };
-type ModelsResponse = { ok: true; models: ModelCatalogEntry[] } & Partial<AdminSnapshot>;
+type UsageSummary = {
+  sampleSize: number;
+  denominator: number;
+  avgCostUsd: number | null;
+  avgDurationMs: number | null;
+  avgReasoningTokens: number | null;
+  avgTotalTokens: number | null;
+};
+type ModelUsageRow = {
+  prompt: UsageSummary;
+  answer: UsageSummary;
+  vote: UsageSummary;
+};
+type UsageByModel = Record<string, ModelUsageRow>;
+type ModelsResponse = {
+  ok: true;
+  models: ModelCatalogEntry[];
+  usageByModel?: UsageByModel;
+  usageWindowSize?: number;
+} & Partial<AdminSnapshot>;
 type Mode = "checking" | "locked" | "ready";
 
 const RESET_TOKEN = "RESET";
@@ -70,6 +89,18 @@ function formatLastPolled(lastPolledAt?: number): string {
 function formatArchivedAt(archivedAt?: number): string {
   if (!archivedAt) return "ativo";
   return `arquivado em ${new Date(archivedAt).toLocaleString("pt-BR")}`;
+}
+
+function formatUsd(value: number | null): string {
+  if (value === null || !Number.isFinite(value)) return "N/D";
+  if (value < 0.0001) return "US$0.0000";
+  return `US$${value.toFixed(value < 0.01 ? 4 : 3)}`;
+}
+
+function formatUsageLine(label: string, summary?: UsageSummary): string {
+  if (!summary) return `${label}: N/D (0/0)`;
+  const avg = formatUsd(summary.avgCostUsd);
+  return `${label}: ${avg} (${summary.sampleSize}/${summary.denominator})`;
 }
 
 async function readErrorMessage(res: Response): Promise<string> {
@@ -115,6 +146,8 @@ function App() {
   const [mode, setMode] = useState<Mode>("checking");
   const [snapshot, setSnapshot] = useState<AdminSnapshot | null>(null);
   const [models, setModels] = useState<ModelCatalogEntry[]>([]);
+  const [usageByModel, setUsageByModel] = useState<UsageByModel>({});
+  const [usageWindowSize, setUsageWindowSize] = useState(50);
   const [viewerTargets, setViewerTargets] = useState<ViewerTarget[]>([]);
   const [passcode, setPasscode] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -148,6 +181,8 @@ function App() {
   async function loadModels(passcodeToUse: string) {
     const response = await requestAdminJson<ModelsResponse>("/admin/models", passcodeToUse);
     setModels(response.models);
+    setUsageByModel(response.usageByModel ?? {});
+    setUsageWindowSize(response.usageWindowSize ?? 50);
   }
 
   useEffect(() => {
@@ -169,6 +204,7 @@ function App() {
         } catch {
           setViewerTargets([]);
           setModels([]);
+          setUsageByModel({});
         }
       })
       .catch(() => {
@@ -444,6 +480,8 @@ function App() {
         body: JSON.stringify(body),
       });
       setModels(data.models);
+      setUsageByModel(data.usageByModel ?? {});
+      setUsageWindowSize(data.usageWindowSize ?? 50);
       const status = await requestAdminJson<AdminResponse>("/admin/status", passcodeValue);
       setSnapshot(status);
       resetModelForm();
@@ -464,6 +502,8 @@ function App() {
         body: JSON.stringify({ modelId: modelIdValue, enabled }),
       });
       setModels(data.models);
+      setUsageByModel(data.usageByModel ?? {});
+      setUsageWindowSize(data.usageWindowSize ?? 50);
       const status = await requestAdminJson<AdminResponse>("/admin/status", passcodeValue);
       setSnapshot(status);
     } catch (err) {
@@ -489,6 +529,8 @@ function App() {
         body: JSON.stringify({ modelId: modelIdValue }),
       });
       setModels(data.models);
+      setUsageByModel(data.usageByModel ?? {});
+      setUsageWindowSize(data.usageWindowSize ?? 50);
       const status = await requestAdminJson<AdminResponse>("/admin/status", passcodeValue);
       setSnapshot(status);
     } catch (err) {
@@ -508,6 +550,8 @@ function App() {
         body: JSON.stringify({ modelId: modelIdValue, enabled: true }),
       });
       setModels(data.models);
+      setUsageByModel(data.usageByModel ?? {});
+      setUsageWindowSize(data.usageWindowSize ?? 50);
       const status = await requestAdminJson<AdminResponse>("/admin/status", passcodeValue);
       setSnapshot(status);
     } catch (err) {
@@ -531,6 +575,7 @@ function App() {
       writeStoredPasscode("");
       setSnapshot(null);
       setModels([]);
+      setUsageByModel({});
       setViewerTargets([]);
       setPasscode("");
       resetTargetForm();
@@ -722,6 +767,7 @@ function App() {
           </div>
           <p className="muted">
             Adicione modelos, habilite/desabilite sem apagar dados e arquive quando nao quiser mais usar.
+            Custos medios usam janela das ultimas {usageWindowSize} requests bem-sucedidas por tipo.
           </p>
           {isModelFormOpen ? (
             <>
@@ -866,6 +912,7 @@ function App() {
             ) : (
               visibleModels.map((model) => {
                 const archived = Boolean(model.archivedAt);
+                const usage = usageByModel[model.modelId];
                 return (
                 <div className="model-row" key={model.modelId}>
                   <div className="model-row__meta">
@@ -883,6 +930,11 @@ function App() {
                       logo: {model.logoId} | effort: {normalizeModelReasoningEffort(model.reasoningEffort)} |{" "}
                       {formatArchivedAt(model.archivedAt)}
                     </span>
+                    <div className="model-row__usage">
+                      <span>{formatUsageLine("Prompt avg", usage?.prompt)}</span>
+                      <span>{formatUsageLine("Resposta avg", usage?.answer)}</span>
+                      <span>{formatUsageLine("Voto avg", usage?.vote)}</span>
+                    </div>
                   </div>
                   <div className="model-row__actions">
                     {archived ? (

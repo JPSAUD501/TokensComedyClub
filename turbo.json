@@ -1,5 +1,6 @@
 {
   "$schema": "https://turbo.build/schema.json",
+  "daemon": false,
   "ui": "tui",
   "tasks": {
     "dev:web": {

@@ -111,6 +111,16 @@ function withOptions(handler: (ctx: any, request: Request) => Promise<Response>)
   });
 }
 
+async function getModelsWithUsage(ctx: any) {
+  const models = await ctx.runQuery(convexInternal.models.listModels, {});
+  const usage = await ctx.runQuery(convexInternal.usage.getAdminModelUsageAverages, {});
+  return {
+    models,
+    usageByModel: usage.usageByModel ?? {},
+    usageWindowSize: usage.usageWindowSize ?? 50,
+  };
+}
+
 for (const path of [
   "/admin/login",
   "/admin/viewer-targets",
@@ -266,8 +276,8 @@ http.route({
       return text(request, "Unauthorized", 401);
     }
     await ctx.runMutation(convexInternal.models.ensureModelCatalogSeeded, {});
-    const models = await ctx.runQuery(convexInternal.models.listModels, {});
-    return json(request, { ok: true, models });
+    const payload = await getModelsWithUsage(ctx);
+    return json(request, { ok: true, ...payload });
   }),
 });
 
@@ -331,9 +341,9 @@ http.route({
       return text(request, error instanceof Error ? error.message : "Failed to create model", 400);
     }
 
-    const models = await ctx.runQuery(convexInternal.models.listModels, {});
+    const modelsPayload = await getModelsWithUsage(ctx);
     const snapshot = await ctx.runMutation(convexInternal.admin.getSnapshot, {});
-    return json(request, { ok: true, models, ...snapshot });
+    return json(request, { ok: true, ...modelsPayload, ...snapshot });
   }),
 });
 
@@ -406,9 +416,9 @@ http.route({
       return text(request, error instanceof Error ? error.message : "Failed to update model", 400);
     }
 
-    const models = await ctx.runQuery(convexInternal.models.listModels, {});
+    const modelsPayload = await getModelsWithUsage(ctx);
     const snapshot = await ctx.runMutation(convexInternal.admin.getSnapshot, {});
-    return json(request, { ok: true, models, ...snapshot });
+    return json(request, { ok: true, ...modelsPayload, ...snapshot });
   }),
 });
 
@@ -445,9 +455,9 @@ http.route({
       return text(request, error instanceof Error ? error.message : "Failed to update model", 400);
     }
 
-    const models = await ctx.runQuery(convexInternal.models.listModels, {});
+    const modelsPayload = await getModelsWithUsage(ctx);
     const snapshot = await ctx.runMutation(convexInternal.admin.getSnapshot, {});
-    return json(request, { ok: true, models, ...snapshot });
+    return json(request, { ok: true, ...modelsPayload, ...snapshot });
   }),
 });
 
@@ -480,9 +490,9 @@ http.route({
       return text(request, error instanceof Error ? error.message : "Failed to remove model", 400);
     }
 
-    const models = await ctx.runQuery(convexInternal.models.listModels, {});
+    const modelsPayload = await getModelsWithUsage(ctx);
     const snapshot = await ctx.runMutation(convexInternal.admin.getSnapshot, {});
-    return json(request, { ok: true, models, ...snapshot });
+    return json(request, { ok: true, ...modelsPayload, ...snapshot });
   }),
 });
 
@@ -516,9 +526,9 @@ http.route({
       return text(request, error instanceof Error ? error.message : "Failed to restore model", 400);
     }
 
-    const models = await ctx.runQuery(convexInternal.models.listModels, {});
+    const modelsPayload = await getModelsWithUsage(ctx);
     const snapshot = await ctx.runMutation(convexInternal.admin.getSnapshot, {});
-    return json(request, { ok: true, models, ...snapshot });
+    return json(request, { ok: true, ...modelsPayload, ...snapshot });
   }),
 });
 

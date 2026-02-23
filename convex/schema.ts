@@ -16,6 +16,26 @@ const modelValidator = v.object({
   color: v.optional(v.string()),
   logoId: v.optional(v.string()),
   reasoningEffort: v.optional(modelReasoningEffortValidator),
+  metricsEpoch: v.optional(v.number()),
+});
+
+const llmDurationSourceValidator = v.union(
+  v.literal("openrouter_latency"),
+  v.literal("openrouter_generation_time"),
+  v.literal("local"),
+);
+
+const taskMetricsValidator = v.object({
+  generationId: v.string(),
+  costUsd: v.number(),
+  promptTokens: v.number(),
+  completionTokens: v.number(),
+  totalTokens: v.number(),
+  reasoningTokens: v.number(),
+  durationMsLocal: v.number(),
+  durationMsFinal: v.number(),
+  durationSource: llmDurationSourceValidator,
+  recordedAt: v.number(),
 });
 
 const taskValidator = v.object({
@@ -24,6 +44,7 @@ const taskValidator = v.object({
   finishedAt: v.optional(v.number()),
   result: v.optional(v.string()),
   error: v.optional(v.string()),
+  metrics: v.optional(taskMetricsValidator),
 });
 
 const storedVoteValidator = v.object({
@@ -41,6 +62,7 @@ export default defineSchema({
     color: v.string(),
     logoId: v.string(),
     reasoningEffort: v.optional(modelReasoningEffortValidator),
+    metricsEpoch: v.optional(v.number()),
     enabled: v.boolean(),
     archivedAt: v.optional(v.number()),
     createdAt: v.number(),
@@ -160,4 +182,51 @@ export default defineSchema({
     .index("by_enabled", ["enabled"])
     .index("by_platform_and_target", ["platform", "target"])
     .index("by_platform", ["platform"]),
+
+  llmUsageEvents: defineTable({
+    generation: v.number(),
+    roundId: v.id("rounds"),
+    roundNum: v.number(),
+    requestType: v.union(v.literal("prompt"), v.literal("answer"), v.literal("vote")),
+    answerIndex: v.optional(v.number()),
+    voteIndex: v.optional(v.number()),
+    modelId: v.string(),
+    modelName: v.string(),
+    modelMetricsEpoch: v.number(),
+    generationId: v.string(),
+    costUsd: v.number(),
+    promptTokens: v.number(),
+    completionTokens: v.number(),
+    totalTokens: v.number(),
+    reasoningTokens: v.number(),
+    durationMsLocal: v.number(),
+    durationMsFinal: v.number(),
+    durationSource: llmDurationSourceValidator,
+    startedAt: v.number(),
+    finishedAt: v.number(),
+    createdAt: v.number(),
+  })
+    .index("by_generation_model_epoch_type_finishedAt", [
+      "generation",
+      "modelId",
+      "modelMetricsEpoch",
+      "requestType",
+      "finishedAt",
+    ])
+    .index("by_generation", ["generation"])
+    .index("by_round", ["roundId"]),
+
+  liveReasoningProgress: defineTable({
+    generation: v.number(),
+    roundId: v.id("rounds"),
+    requestType: v.union(v.literal("prompt"), v.literal("answer")),
+    answerIndex: v.optional(v.number()),
+    modelId: v.string(),
+    estimatedReasoningTokens: v.number(),
+    updatedAt: v.number(),
+    finalized: v.boolean(),
+  })
+    .index("by_generation_round", ["generation", "roundId"])
+    .index("by_round_type", ["roundId", "requestType"])
+    .index("by_generation", ["generation"]),
 });

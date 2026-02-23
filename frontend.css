@@ -299,6 +299,19 @@ body {
   border-left-color: #ef4444;
 }
 
+.task-metrics {
+  margin-bottom: 10px;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.2px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+}
+
+.task-metrics--live {
+  color: var(--text-muted);
+}
+
 /* ── Showdown ─────────────────────────────────────────────────── */
 
 .showdown {
@@ -744,6 +757,10 @@ body {
   animation: toast-in 0.3s cubic-bezier(0.22, 1, 0.36, 1);
   white-space: nowrap;
   max-width: calc(100vw - 40px);
+}
+
+.next-toast__metrics {
+  color: var(--text-muted);
 }
 
 @keyframes toast-in {

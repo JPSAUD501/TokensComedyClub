@@ -21,6 +21,25 @@ const modelReasoningEffortValidator = v.union(
   v.literal("none"),
 );
 
+const llmDurationSourceValidator = v.union(
+  v.literal("openrouter_latency"),
+  v.literal("openrouter_generation_time"),
+  v.literal("local"),
+);
+
+const taskMetricsValidator = v.object({
+  generationId: v.string(),
+  costUsd: v.number(),
+  promptTokens: v.number(),
+  completionTokens: v.number(),
+  totalTokens: v.number(),
+  reasoningTokens: v.number(),
+  durationMsLocal: v.number(),
+  durationMsFinal: v.number(),
+  durationSource: llmDurationSourceValidator,
+  recordedAt: v.number(),
+});
+
 function getVotingWindowMs(totalViewerCount: number): number {
   return totalViewerCount > 0 ? VIEWER_VOTE_WINDOW_ACTIVE_MS : VIEWER_VOTE_WINDOW_IDLE_MS;
 }
@@ -146,6 +165,7 @@ export const createRound = internalMutation({
       color: v.optional(v.string()),
       logoId: v.optional(v.string()),
       reasoningEffort: v.optional(modelReasoningEffortValidator),
+      metricsEpoch: v.optional(v.number()),
     }),
     contestants: v.array(
       v.object({
@@ -154,6 +174,7 @@ export const createRound = internalMutation({
         color: v.optional(v.string()),
         logoId: v.optional(v.string()),
         reasoningEffort: v.optional(modelReasoningEffortValidator),
+        metricsEpoch: v.optional(v.number()),
       }),
     ),
   },
@@ -207,6 +228,7 @@ export const setPromptResult = internalMutation({
     expectedGeneration: v.number(),
     roundId: v.id("rounds"),
     prompt: v.string(),
+    metrics: v.optional(taskMetricsValidator),
   },
   returns: v.boolean(),
   handler: async (ctx, args) => {
@@ -222,6 +244,7 @@ export const setPromptResult = internalMutation({
         finishedAt: Date.now(),
         result: args.prompt,
         error: undefined,
+        metrics: args.metrics,
       },
       updatedAt: Date.now(),
     });
@@ -304,6 +327,7 @@ export const setAnswerResult = internalMutation({
     answerIndex: v.number(),
     result: v.optional(v.string()),
     error: v.optional(v.string()),
+    metrics: v.optional(taskMetricsValidator),
   },
   returns: v.boolean(),
   handler: async (ctx, args) => {
@@ -320,6 +344,7 @@ export const setAnswerResult = internalMutation({
       finishedAt: Date.now(),
       result: args.result ?? task.result ?? "[no answer]",
       error: args.error,
+      metrics: args.metrics,
     };
 
     const answerTasks = [...round.answerTasks];
@@ -378,6 +403,7 @@ export const startVoting = internalMutation({
         color: v.optional(v.string()),
         logoId: v.optional(v.string()),
         reasoningEffort: v.optional(modelReasoningEffortValidator),
+        metricsEpoch: v.optional(v.number()),
       }),
     ),
   },
@@ -536,7 +562,7 @@ export const recoverStaleActiveRound = internalMutation({
         phase: "done",
         answerTasks,
         skipped: true,
-        skipReason: round.skipReason ?? "Falha na resposta (timeout 45s)",
+        skipReason: round.skipReason ?? "Falha na resposta (timeout 60s)",
         skipType: "answer_error",
         completedAt: now,
         updatedAt: now,

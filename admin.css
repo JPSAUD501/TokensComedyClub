@@ -397,6 +397,18 @@ body {
   color: var(--text-dim);
 }
 
+.model-row__usage {
+  margin-top: 4px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
 .model-row__actions {
   display: flex;
   align-items: center;

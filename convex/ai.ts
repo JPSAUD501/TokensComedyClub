@@ -1,16 +1,60 @@
 "use node";
 
-import { generateText } from "ai";
+import { generateText, streamText } from "ai";
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { ALL_PROMPTS } from "../prompts";
 import { normalizeModelReasoningEffort, type Model } from "../shared/models";
 import {
   MODEL_ATTEMPTS,
   MODEL_CALL_TIMEOUT_MS,
-  MODEL_RETRY_BACKOFF_MS,
-  sleep,
   shuffle,
 } from "./constants";
+
+const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
+const GENERATION_RETRY_DELAYS_MS = [400, 800, 1_200, 1_800, 2_500, 3_500, 5_000] as const;
+
+export type DurationSource =
+  | "openrouter_latency"
+  | "openrouter_generation_time"
+  | "local";
+
+export type LlmCallMetrics = {
+  generationId: string;
+  costUsd: number;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  reasoningTokens: number;
+  durationMsLocal: number;
+  durationMsFinal: number;
+  durationSource: DurationSource;
+  recordedAt: number;
+  startedAt: number;
+  finishedAt: number;
+};
+
+export type TextCallResult = {
+  text: string;
+  generationId?: string;
+  metrics?: LlmCallMetrics;
+  reasoningTokensEstimated: number;
+};
+
+export type VoteCallResult = {
+  vote: "A" | "B";
+  generationId?: string;
+  metrics?: LlmCallMetrics;
+};
+
+type OpenRouterGenerationInfo = {
+  totalCost: number;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  reasoningTokens: number;
+  durationMsFinal: number;
+  durationSource: DurationSource;
+};
 
 const openrouter = createOpenRouter({
   apiKey: process.env.OPENROUTER_API_KEY,
@@ -39,33 +83,201 @@ function cleanResponse(text: string): string {
   return trimmed;
 }
 
-function isRealString(s: string, minLength = 5): boolean {
-  return s.length >= minLength;
+function numberOrNull(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
 }
 
-async function withRetry<T>(
-  fn: () => Promise<T>,
-  validate: (result: T) => boolean,
-  attempts = MODEL_ATTEMPTS,
-): Promise<T> {
-  let lastErr: unknown;
-  for (let attempt = 0; attempt < attempts; attempt++) {
-    try {
-      const result = await fn();
-      if (validate(result)) return result;
-      lastErr = new Error("validation failed");
-    } catch (err) {
-      lastErr = err;
-    }
-    if (attempt < attempts - 1) {
-      const backoffMs =
-        MODEL_RETRY_BACKOFF_MS[Math.min(attempt, MODEL_RETRY_BACKOFF_MS.length - 1)] ?? 0;
-      if (backoffMs > 0) {
-        await sleep(backoffMs);
+function asNonNegativeInt(value: unknown): number {
+  const parsed = numberOrNull(value);
+  if (parsed === null) return 0;
+  return Math.max(0, Math.floor(parsed));
+}
+
+function pickTokenCount(primary: unknown, fallback: unknown): number {
+  const primaryNumber = numberOrNull(primary);
+  if (primaryNumber !== null && primaryNumber >= 0) {
+    return asNonNegativeInt(primaryNumber);
+  }
+  return asNonNegativeInt(fallback);
+}
+
+function estimateTokensFromText(delta: string): number {
+  const length = delta.trim().length;
+  if (length <= 0) return 0;
+  return Math.max(1, Math.ceil(length / 4));
+}
+
+function computeDuration(
+  info: any,
+  durationMsLocal: number,
+): { durationMsFinal: number; durationSource: DurationSource } {
+  const latency = numberOrNull(info?.latency);
+  if (latency !== null && latency >= 0) {
+    return {
+      durationMsFinal: Math.max(0, Math.floor(latency)),
+      durationSource: "openrouter_latency",
+    };
+  }
+
+  const generationTime = numberOrNull(info?.generation_time);
+  if (generationTime !== null && generationTime >= 0) {
+    return {
+      durationMsFinal: Math.max(0, Math.floor(generationTime)),
+      durationSource: "openrouter_generation_time",
+    };
+  }
+
+  return {
+    durationMsFinal: durationMsLocal,
+    durationSource: "local",
+  };
+}
+
+function parseGenerationInfo(info: any, durationMsLocal: number): OpenRouterGenerationInfo | null {
+  const totalCost = numberOrNull(info?.total_cost) ?? numberOrNull(info?.usage);
+  if (totalCost === null || totalCost < 0) {
+    return null;
+  }
+
+  const promptTokens = pickTokenCount(info?.tokens_prompt, info?.usage?.prompt_tokens);
+  const completionTokens = pickTokenCount(info?.tokens_completion, info?.usage?.completion_tokens);
+  const totalTokens = Math.max(
+    asNonNegativeInt(info?.usage?.total_tokens),
+    promptTokens + completionTokens,
+  );
+  const reasoningTokens = Math.max(
+    asNonNegativeInt(info?.native_tokens_reasoning),
+    asNonNegativeInt(info?.usage?.completion_tokens_details?.reasoning_tokens),
+  );
+  const { durationMsFinal, durationSource } = computeDuration(info, durationMsLocal);
+
+  return {
+    totalCost,
+    promptTokens,
+    completionTokens,
+    totalTokens,
+    reasoningTokens,
+    durationMsFinal,
+    durationSource,
+  };
+}
+
+async function sleep(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function getGenerationLookupKeys(): string[] {
+  const keys = [
+    process.env.OPENROUTER_ADMIN_API_KEY,
+    process.env.OPENROUTER_API_KEY,
+  ].filter((value): value is string => typeof value === "string" && value.length > 0);
+  return [...new Set(keys)];
+}
+
+async function fetchOpenRouterGeneration(generationId: string): Promise<OpenRouterGenerationInfo | null> {
+  const apiKeys = getGenerationLookupKeys();
+  if (apiKeys.length === 0) return null;
+
+  const url = `${OPENROUTER_BASE_URL}/generation?id=${encodeURIComponent(generationId)}`;
+
+  for (let attempt = 0; attempt < GENERATION_RETRY_DELAYS_MS.length; attempt++) {
+    let shouldRetry = false;
+    for (const apiKey of apiKeys) {
+      try {
+        const response = await fetch(url, {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+          },
+        });
+
+        if (response.ok) {
+          const payload = (await response.json()) as { data?: unknown } | unknown;
+          const info = parseGenerationInfo((payload as any)?.data ?? payload, 0);
+          if (info) return info;
+          shouldRetry = true;
+          continue;
+        }
+
+        if (response.status === 401 || response.status === 403) {
+          continue;
+        }
+
+        if (
+          response.status === 404 ||
+          response.status === 429 ||
+          response.status === 500 ||
+          response.status === 502 ||
+          response.status === 503 ||
+          response.status === 504
+        ) {
+          shouldRetry = true;
+          continue;
+        }
+
+        return null;
+      } catch {
+        shouldRetry = true;
       }
     }
+
+    if (!shouldRetry) break;
+    await sleep(GENERATION_RETRY_DELAYS_MS[attempt]!);
   }
-  throw lastErr;
+
+  return null;
+}
+
+function withDurationFallback(
+  info: OpenRouterGenerationInfo | null,
+  durationMsLocal: number,
+): OpenRouterGenerationInfo | null {
+  if (!info) return null;
+  const duration =
+    info.durationSource === "local"
+      ? {
+          durationMsFinal: durationMsLocal,
+          durationSource: "local" as const,
+        }
+      : {
+          durationMsFinal: info.durationMsFinal,
+          durationSource: info.durationSource,
+        };
+  return {
+    ...info,
+    ...duration,
+  };
+}
+
+function toMetrics(
+  generationId: string,
+  info: OpenRouterGenerationInfo | null,
+  startedAt: number,
+  finishedAt: number,
+): LlmCallMetrics | undefined {
+  const durationMsLocal = Math.max(0, finishedAt - startedAt);
+  const normalized = withDurationFallback(info, durationMsLocal);
+  if (!normalized) return undefined;
+
+  return {
+    generationId,
+    costUsd: normalized.totalCost,
+    promptTokens: normalized.promptTokens,
+    completionTokens: normalized.completionTokens,
+    totalTokens: normalized.totalTokens,
+    reasoningTokens: normalized.reasoningTokens,
+    durationMsLocal,
+    durationMsFinal: normalized.durationMsFinal,
+    durationSource: normalized.durationSource,
+    recordedAt: Date.now(),
+    startedAt,
+    finishedAt,
+  };
 }
 
 function buildPromptSystem(): string {
@@ -75,40 +287,112 @@ function buildPromptSystem(): string {
     .join("\n")}\n\nCrie algo ORIGINAL - nao copie estes exemplos.`;
 }
 
-export async function callGeneratePrompt(model: Model): Promise<string> {
-  return withRetry(
-    async () => {
-      const { text } = await generateText({
-        model: getModelChat(model),
-        system: buildPromptSystem(),
-        prompt:
-          "Gere um unico prompt original de Quiplash. Seja criativo e nao repita padroes comuns.",
-        timeout: MODEL_CALL_TIMEOUT_MS,
-        maxRetries: 0,
-      });
-      return cleanResponse(text);
+type ReasoningProgressReporter = (
+  estimatedReasoningTokens: number,
+  finalized: boolean,
+) => Promise<void> | void;
+
+async function generateTextWithReasoningStream(
+  model: Model,
+  system: string,
+  prompt: string,
+  onReasoningProgress?: ReasoningProgressReporter,
+): Promise<TextCallResult> {
+  const startedAt = Date.now();
+  let estimatedReasoningTokens = 0;
+  let lastFlushedTokens = -1;
+  let lastFlushedAt = 0;
+
+  const flushReasoningProgress = async (force = false, finalized = false) => {
+    if (!onReasoningProgress) return;
+    const now = Date.now();
+    if (!force) {
+      if (estimatedReasoningTokens === lastFlushedTokens) return;
+      if (now - lastFlushedAt < 1_000) return;
+    }
+    lastFlushedAt = now;
+    lastFlushedTokens = estimatedReasoningTokens;
+    await onReasoningProgress(estimatedReasoningTokens, finalized);
+  };
+
+  const result = streamText({
+    model: getModelChat(model),
+    system,
+    prompt,
+    timeout: MODEL_CALL_TIMEOUT_MS,
+    maxRetries: MODEL_ATTEMPTS - 1,
+    onChunk: async ({ chunk }) => {
+      if (chunk.type !== "reasoning-delta") return;
+      estimatedReasoningTokens += estimateTokensFromText(chunk.text);
+      await flushReasoningProgress(false, false);
     },
-    (s) => isRealString(s, 10),
-    MODEL_ATTEMPTS,
-  );
+  });
+
+  const [textRaw, response] = await Promise.all([result.text, result.response]);
+  const finishedAt = Date.now();
+  const text = cleanResponse(textRaw);
+  const generationId = response.id;
+  if (!generationId) {
+    await flushReasoningProgress(true, true);
+    return {
+      text,
+      reasoningTokensEstimated: estimatedReasoningTokens,
+    };
+  }
+
+  const info = await fetchOpenRouterGeneration(generationId);
+  const metrics = toMetrics(generationId, info, startedAt, finishedAt);
+  if (metrics) {
+    estimatedReasoningTokens = Math.max(
+      estimatedReasoningTokens,
+      metrics.reasoningTokens,
+    );
+  }
+  await flushReasoningProgress(true, true);
+
+  return {
+    text,
+    generationId,
+    metrics,
+    reasoningTokensEstimated: estimatedReasoningTokens,
+  };
 }
 
-export async function callGenerateAnswer(model: Model, prompt: string): Promise<string> {
-  return withRetry(
-    async () => {
-      const { text } = await generateText({
-        model: getModelChat(model),
-        system:
-          "You are playing Quiplash! You'll be given a fill-in-the-blank prompt. Give the FUNNIEST possible answer. Be creative, edgy, unexpected, and concise. Reply with ONLY your answer - no quotes, no explanation, no preamble. Keep it short (under 12 words).",
-        prompt: `Fill in the blank: ${prompt}`,
-        timeout: MODEL_CALL_TIMEOUT_MS,
-        maxRetries: 0,
-      });
-      return cleanResponse(text);
-    },
-    (s) => isRealString(s, 3),
-    1,
+export async function callGeneratePrompt(
+  model: Model,
+  onReasoningProgress?: ReasoningProgressReporter,
+): Promise<TextCallResult> {
+  const result = await generateTextWithReasoningStream(
+    model,
+    buildPromptSystem(),
+    "Gere um unico prompt original de Quiplash. Seja criativo e nao repita padroes comuns.",
+    onReasoningProgress,
   );
+
+  if (result.text.trim().length < 10) {
+    throw new Error("Prompt generation returned an invalid text.");
+  }
+
+  return result;
+}
+
+export async function callGenerateAnswer(
+  model: Model,
+  prompt: string,
+  onReasoningProgress?: ReasoningProgressReporter,
+): Promise<TextCallResult> {
+  const result = await generateTextWithReasoningStream(
+    model,
+    "You are playing Quiplash! You'll be given a fill-in-the-blank prompt. Give the FUNNIEST possible answer. Be creative, edgy, unexpected, and concise. Reply with ONLY your answer - no quotes, no explanation, no preamble. Keep it short (under 12 words).",
+    `Fill in the blank: ${prompt}`,
+    onReasoningProgress,
+  );
+
+  if (result.text.trim().length < 3) {
+    throw new Error("Answer generation returned an invalid text.");
+  }
+
+  return result;
 }
 
 export async function callVote(
@@ -116,25 +400,34 @@ export async function callVote(
   prompt: string,
   a: { answer: string },
   b: { answer: string },
-): Promise<"A" | "B"> {
-  return withRetry(
-    async () => {
-      const { text } = await generateText({
-        model: getModelChat(voter),
-        system:
-          "You are a judge in a comedy game. You'll see a fill-in-the-blank prompt and two answers. Pick which answer is FUNNIER. You MUST respond with exactly \"A\" or \"B\".",
-        prompt: `Prompt: \"${prompt}\"\n\nAnswer A: \"${a.answer}\"\nAnswer B: \"${b.answer}\"\n\nWhich is funnier? Reply with just A or B.`,
-        timeout: MODEL_CALL_TIMEOUT_MS,
-        maxRetries: 0,
-      });
+): Promise<VoteCallResult> {
+  const startedAt = Date.now();
+  const result = await generateText({
+    model: getModelChat(voter),
+    system:
+      "You are a judge in a comedy game. You'll see a fill-in-the-blank prompt and two answers. Pick which answer is FUNNIER. You MUST respond with exactly \"A\" or \"B\".",
+    prompt: `Prompt: "${prompt}"\n\nAnswer A: "${a.answer}"\nAnswer B: "${b.answer}"\n\nWhich is funnier? Reply with just A or B.`,
+    timeout: MODEL_CALL_TIMEOUT_MS,
+    maxRetries: MODEL_ATTEMPTS - 1,
+  });
+  const finishedAt = Date.now();
 
-      const cleaned = text.trim().toUpperCase();
-      if (!cleaned.startsWith("A") && !cleaned.startsWith("B")) {
-        throw new Error(`Invalid vote: ${text.trim()}`);
-      }
-      return cleaned.startsWith("A") ? "A" : "B";
-    },
-    (v) => v === "A" || v === "B",
-    MODEL_ATTEMPTS,
-  );
+  const cleaned = result.text.trim().toUpperCase();
+  if (!cleaned.startsWith("A") && !cleaned.startsWith("B")) {
+    throw new Error(`Invalid vote: ${result.text.trim()}`);
+  }
+  const vote: "A" | "B" = cleaned.startsWith("A") ? "A" : "B";
+
+  const generationId = result.response.id;
+  if (!generationId) {
+    return { vote };
+  }
+  const info = await fetchOpenRouterGeneration(generationId);
+  const metrics = toMetrics(generationId, info, startedAt, finishedAt);
+
+  return {
+    vote,
+    generationId,
+    metrics,
+  };
 }
