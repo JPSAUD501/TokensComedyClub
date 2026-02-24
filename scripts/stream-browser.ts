@@ -22,6 +22,7 @@ const AUDIO_BITRATE = "160k";
 const PLAYLIST_TRACKS = 20_000;
 const BROADCAST_WAIT_TIMEOUT_MS = 30_000;
 const BROADCAST_WAIT_RETRY_MS = 1_000;
+const FIRST_CHUNK_TIMEOUT_MS_DEFAULT = 30_000;
 
 function shouldDisableChromiumSandbox(): boolean {
   const override = process.env.PUPPETEER_DISABLE_SANDBOX?.trim().toLowerCase();
@@ -240,6 +241,14 @@ async function pipeReadableToSink(
   }
 }
 
+function resolveFirstChunkTimeoutMs(): number {
+  const raw = process.env.BROADCAST_FIRST_CHUNK_TIMEOUT_MS?.trim();
+  if (!raw) return FIRST_CHUNK_TIMEOUT_MS_DEFAULT;
+  const parsed = Number.parseInt(raw, 10);
+  if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  return FIRST_CHUNK_TIMEOUT_MS_DEFAULT;
+}
+
 async function pipeReadableToRedactedStderr(readable: ReadableStream<Uint8Array>) {
   const reader = readable.getReader();
   const decoder = new TextDecoder();
@@ -378,6 +387,15 @@ async function main() {
   });
 
   const page = await browser.newPage();
+  page.on("console", (message) => {
+    const text = message.text().trim();
+    if (!text) return;
+    process.stderr.write(`[broadcast] ${redactSensitive(text)}\n`);
+  });
+  page.on("pageerror", (error) => {
+    const detail = error instanceof Error ? error.message : String(error);
+    process.stderr.write(`[broadcast:error] ${redactSensitive(detail)}\n`);
+  });
   await page.setViewport({ width: 1920, height: 1080, deviceScaleFactor: 1 });
 
   const captureUrl = new URL(broadcastUrl);
@@ -388,11 +406,24 @@ async function main() {
   await page.goto(captureUrl.toString(), { waitUntil: "networkidle2" });
   await page.waitForSelector("#broadcast-canvas", { timeout: 10_000 });
 
+  const firstChunkTimeoutMs = resolveFirstChunkTimeoutMs();
   const firstChunkTimer = setTimeout(() => {
-    firstChunkReject?.(
-      new Error("No media chunks received from headless browser within 10s."),
-    );
-  }, 10_000);
+    void (async () => {
+      let statusText = "";
+      try {
+        statusText = await page.$eval(
+          "#broadcast-status",
+          (el) => (el.textContent ?? "").trim(),
+        );
+      } catch {}
+      const statusSuffix = statusText ? ` Broadcast status: ${statusText}.` : "";
+      firstChunkReject?.(
+        new Error(
+          `No media chunks received from headless browser within ${Math.round(firstChunkTimeoutMs / 1000)}s.${statusSuffix}`,
+        ),
+      );
+    })();
+  }, firstChunkTimeoutMs);
 
   await firstChunk.finally(() => clearTimeout(firstChunkTimer));
   console.log(`Streaming broadcast in ${mode} mode`);
