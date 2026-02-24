@@ -328,24 +328,24 @@ function App() {
   }, [ensureStarted, heartbeat, ghostViewer]);
 
   return (
-    <div className="app">
-      <a href="/" className="main-logo">
+    <div className="app history-page">
+      <a href="/" className="history-main-logo">
         <img src="/assets/logo.svg" alt="TokensComedyClub" />
       </a>
-      <main className="main">
-        <div className="page-header">
-          <div className="page-title">Rodadas Anteriores</div>
-          <div className="page-links">
-            <a href="/" className="back-link">
+      <main className="history-main">
+        <div className="history-page-header">
+          <div className="history-page-title">Rodadas Anteriores</div>
+          <div className="history-page-links">
+            <a href="/" className="history-back-link">
               Voltar ao Jogo
             </a>
           </div>
         </div>
 
         {status === "LoadingFirstPage" ? (
-          <div className="loading">Carregando...</div>
+          <div className="history-loading">Carregando...</div>
         ) : rounds.length === 0 ? (
-          <div className="empty">Nenhuma rodada anterior encontrada.</div>
+          <div className="history-empty">Nenhuma rodada anterior encontrada.</div>
         ) : (
           <>
             <div
