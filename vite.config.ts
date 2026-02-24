@@ -4,6 +4,9 @@ import react from "@vitejs/plugin-react";
 export default defineConfig({
   appType: "spa",
   plugins: [react()],
+  preview: {
+    allowedHosts: ["tokenscomedyclub.linkai.me"],
+  },
   build: {
     rollupOptions: {
       input: {
