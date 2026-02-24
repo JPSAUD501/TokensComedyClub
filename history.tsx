@@ -1,5 +1,4 @@
 import React from "react";
-import { createRoot } from "react-dom/client";
 import { ConvexProvider, ConvexReactClient, useMutation, usePaginatedQuery, useQuery } from "convex/react";
 import { api } from "./convex/_generated/api";
 import { getLogoUrlById, normalizeHexColor, type ModelCatalogEntry } from "./shared/models";
@@ -330,14 +329,14 @@ function App() {
 
   return (
     <div className="app">
-      <a href="/index.html" className="main-logo">
+      <a href="/" className="main-logo">
         <img src="/assets/logo.svg" alt="TokensComedyClub" />
       </a>
       <main className="main">
         <div className="page-header">
           <div className="page-title">Rodadas Anteriores</div>
           <div className="page-links">
-            <a href="/index.html" className="back-link">
+            <a href="/" className="back-link">
               Voltar ao Jogo
             </a>
           </div>
@@ -375,12 +374,14 @@ function App() {
     </div>
   );
 }
-// ── Mount ───────────────────────────────────────────────────────────────────
 
-const root = createRoot(document.getElementById("root")!);
-root.render(
-  <ConvexProvider client={convex}>
-    <App />
-  </ConvexProvider>,
-);
+function HistoryPage() {
+  return (
+    <ConvexProvider client={convex}>
+      <App />
+    </ConvexProvider>
+  );
+}
+
+export default HistoryPage;
 

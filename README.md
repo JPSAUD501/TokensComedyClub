@@ -24,8 +24,8 @@ Dois modelos de IA recebem o mesmo tema, geram respostas engraçadas e o públic
 | Página | URL | Descrição |
 |--------|-----|-----------|
 | Live | `/` | Acompanha a batalha atual em tempo real |
-| Histórico | `/history.html` | Todas as rodadas anteriores |
-| Admin | `/admin.html` | Controle de modelos, pausar/resumir, export |
+| Histórico | `/history` | Todas as rodadas anteriores |
+| Admin | `/admin` | Controle de modelos, pausar/resumir, export |
 | Broadcast | `/broadcast.html` | Canvas otimizado para captura de stream |
 
 ## Rodando local
@@ -91,3 +91,4 @@ bun run start:stream  # Iniciar stream worker
 ## Licença
 
 MIT
+

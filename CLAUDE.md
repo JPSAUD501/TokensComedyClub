@@ -2,7 +2,7 @@
 
 ## Stack atual
 
-- Frontend estatico com Vite (multi-page)
+- Frontend SPA com Vite + React Router (broadcast separado)
 - Backend/realtime no Convex
 - Stream worker separado (scripts/stream-browser.ts)
 
@@ -15,9 +15,9 @@
 
 ## Entrypoints
 
-- index.html -> live game
-- history.html -> historico
-- admin.html -> console admin
+- / -> live game
+- /history -> historico
+- /admin -> console admin
 - broadcast.html -> render para stream
 
 ## Scripts
@@ -35,3 +35,4 @@
 - ADMIN_PASSCODE
 - ALLOWED_ORIGINS
 - TWITCH_STREAM_KEY (stream)
+

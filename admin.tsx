@@ -1,5 +1,4 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { createRoot } from "react-dom/client";
 import {
   AVAILABLE_MODEL_COLORS,
   AVAILABLE_MODEL_LOGO_IDS,
@@ -1184,7 +1183,7 @@ function App() {
     return (
       <div className="admin admin--centered">
         <main className="panel panel--login">
-          <a href="/index.html" className="logo-link">
+          <a href="/" className="logo-link">
             <img src="/assets/logo.svg" alt="TokensComedyClub" />
           </a>
           <h1>Acesso Admin</h1>
@@ -1228,8 +1227,8 @@ function App() {
           {error && <div className="error-banner">{error}</div>}
 
           <div className="quick-links">
-            <a href="/index.html">Jogo Ao Vivo</a>
-            <a href="/history.html">Historico</a>
+            <a href="/">Jogo Ao Vivo</a>
+            <a href="/history">Historico</a>
           </div>
         </main>
       </div>
@@ -1239,12 +1238,12 @@ function App() {
   return (
     <div className="admin">
       <header className="admin-header">
-        <a href="/index.html" className="logo-link">
+        <a href="/" className="logo-link">
           <img src="/assets/logo.svg" alt="TokensComedyClub" />
         </a>
         <nav className="quick-links">
-          <a href="/index.html">Jogo Ao Vivo</a>
-          <a href="/history.html">Historico</a>
+          <a href="/">Jogo Ao Vivo</a>
+          <a href="/history">Historico</a>
           <button className="link-button" onClick={onLogout} disabled={busy}>
             Sair
           </button>
@@ -2296,8 +2295,5 @@ function App() {
   );
 }
 
-const root = createRoot(document.getElementById("root")!);
-root.render(<App />);
-
-
+export default App;
 
