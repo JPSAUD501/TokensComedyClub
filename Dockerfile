@@ -12,6 +12,7 @@ WORKDIR /app
 
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/node_modules ./node_modules
+COPY --from=build /app/vite.config.ts ./vite.config.ts
 COPY package.json ./
 
 ENV NODE_ENV=production
