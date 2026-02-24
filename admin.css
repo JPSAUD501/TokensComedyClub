@@ -752,6 +752,23 @@ body {
   gap: 8px;
 }
 
+.projections__timing-actions {
+  border: 1px dashed var(--border);
+  padding: 10px;
+  display: grid;
+  gap: 6px;
+}
+
+.projections__timing-actions .btn {
+  justify-self: start;
+}
+
+.projections__timing-note {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
 .projections__totals {
   display: grid;
   gap: 8px;

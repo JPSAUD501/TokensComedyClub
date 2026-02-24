@@ -1,17 +1,16 @@
 import {
   COUNTDOWN_SHORTENED_WINDOW_DETECT_DELTA_MS,
-  VIEWER_VOTE_WINDOW_ACTIVE_MS,
-  VIEWER_VOTE_WINDOW_IDLE_MS,
 } from "../config";
 
-export const VOTING_WINDOW_ACTIVE_MS = VIEWER_VOTE_WINDOW_ACTIVE_MS;
-export const VOTING_WINDOW_IDLE_MS = VIEWER_VOTE_WINDOW_IDLE_MS;
+export const VOTING_WINDOW_ACTIVE_MS = 30_000;
+export const VOTING_WINDOW_IDLE_MS = 120_000;
 
 export type VotingRoundLike = {
   _id?: string;
   num: number;
   phase: "prompting" | "answering" | "voting" | "done";
   viewerVotingEndsAt?: number;
+  viewerVotingWindowMs?: number;
 };
 
 export type VotingCountdownView = {
@@ -84,7 +83,14 @@ export function createVotingCountdownTracker() {
     }
 
     const remainingMs = Math.max(0, round.viewerVotingEndsAt - now);
-    if (remainingMs > VOTING_WINDOW_ACTIVE_MS) {
+    const explicitWindowMs =
+      Number.isFinite(round.viewerVotingWindowMs) && (round.viewerVotingWindowMs ?? 0) > 0
+        ? Number(round.viewerVotingWindowMs)
+        : null;
+
+    if (explicitWindowMs !== null) {
+      windowMs = explicitWindowMs;
+    } else if (remainingMs > VOTING_WINDOW_ACTIVE_MS) {
       windowMs = VOTING_WINDOW_IDLE_MS;
     } else if (windowMs === null) {
       windowMs = VOTING_WINDOW_ACTIVE_MS;

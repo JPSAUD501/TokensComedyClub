@@ -12,6 +12,7 @@ import {
   getEngineState,
   getOrCreateEngineState,
   normalizeScoreRecord,
+  resolveRuntimeRoundTiming,
 } from "./state";
 import {
   computeRunStatus,
@@ -40,6 +41,13 @@ function getViewerPollIntervalMs(): number {
   if (!Number.isFinite(raw) || raw <= 0) return PLATFORM_VIEWER_POLL_INTERVAL_MS;
   return raw;
 }
+
+const projectionTimingValidator = v.object({
+  viewerVoteWindowActiveMs: v.number(),
+  viewerVoteWindowIdleMs: v.number(),
+  postRoundDelayActiveMs: v.number(),
+  postRoundDelayIdleMs: v.number(),
+});
 
 export const getSnapshot = internalMutation({
   args: {},
@@ -267,6 +275,11 @@ export const reset = internalMutation({
       runnerLeaseUntil: undefined,
       reaperScheduledAt: undefined,
       platformPollScheduledAt: undefined,
+      projectionBootstrapRunning: false,
+      projectionBootstrapRunId: undefined,
+      projectionBootstrapStartedAt: undefined,
+      projectionBootstrapFinishedAt: undefined,
+      projectionBootstrapError: undefined,
       updatedAt: Date.now(),
     });
 
@@ -336,6 +349,32 @@ export const backfillEngineStateHumanScores = internalMutation({
     });
 
     return { updated: true };
+  },
+});
+
+export const updateProjectionTimingSettings = internalMutation({
+  args: {
+    viewerVoteWindowActiveMs: v.number(),
+    viewerVoteWindowIdleMs: v.number(),
+    postRoundDelayActiveMs: v.number(),
+  },
+  returns: projectionTimingValidator,
+  handler: async (ctx, args) => {
+    const state = await getOrCreateEngineState(ctx as any);
+    const timing = resolveRuntimeRoundTiming({
+      ...state,
+      ...args,
+    });
+
+    await ctx.db.patch(state._id, {
+      viewerVoteWindowActiveMs: timing.viewerVoteWindowActiveMs,
+      viewerVoteWindowIdleMs: timing.viewerVoteWindowIdleMs,
+      postRoundDelayActiveMs: timing.postRoundDelayActiveMs,
+      postRoundDelayIdleMs: timing.postRoundDelayIdleMs,
+      updatedAt: Date.now(),
+    });
+
+    return timing;
   },
 });
 

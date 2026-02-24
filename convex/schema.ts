@@ -99,6 +99,15 @@ export default defineSchema({
     runnerLeaseUntil: v.optional(v.number()),
     reaperScheduledAt: v.optional(v.number()),
     platformPollScheduledAt: v.optional(v.number()),
+    viewerVoteWindowActiveMs: v.optional(v.number()),
+    viewerVoteWindowIdleMs: v.optional(v.number()),
+    postRoundDelayActiveMs: v.optional(v.number()),
+    postRoundDelayIdleMs: v.optional(v.number()),
+    projectionBootstrapRunning: v.optional(v.boolean()),
+    projectionBootstrapRunId: v.optional(v.string()),
+    projectionBootstrapStartedAt: v.optional(v.number()),
+    projectionBootstrapFinishedAt: v.optional(v.number()),
+    projectionBootstrapError: v.optional(v.string()),
   }).index("by_key", ["key"]),
 
   rounds: defineTable({
@@ -121,6 +130,8 @@ export default defineSchema({
     viewerVotesA: v.optional(v.number()),
     viewerVotesB: v.optional(v.number()),
     viewerVotingEndsAt: v.optional(v.number()),
+    viewerVotingWindowMs: v.optional(v.number()),
+    viewerVotingMode: v.optional(v.union(v.literal("active"), v.literal("idle"))),
     skipped: v.optional(v.boolean()),
     skipReason: v.optional(v.string()),
     skipType: v.optional(v.union(v.literal("prompt_error"), v.literal("answer_error"))),
@@ -191,8 +202,9 @@ export default defineSchema({
 
   llmUsageEvents: defineTable({
     generation: v.number(),
-    roundId: v.id("rounds"),
-    roundNum: v.number(),
+    roundId: v.optional(v.id("rounds")),
+    roundNum: v.optional(v.number()),
+    origin: v.optional(v.union(v.literal("runtime"), v.literal("bootstrap"))),
     requestType: v.union(v.literal("prompt"), v.literal("answer"), v.literal("vote")),
     answerIndex: v.optional(v.number()),
     voteIndex: v.optional(v.number()),

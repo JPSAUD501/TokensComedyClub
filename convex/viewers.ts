@@ -4,14 +4,13 @@ import { internal } from "./_generated/api";
 const convexInternal = internal as any;
 import {
   VIEWER_PRESENCE_REAPER_MAX_LIMIT,
-  VIEWER_VOTE_WINDOW_ACTIVE_MS,
   VIEWER_REAPER_BATCH,
   VIEWER_REAPER_INTERVAL_MS,
   VIEWER_SESSION_TTL_MS,
   VIEWER_SHARD_COUNT,
   hashToShard,
 } from "./constants";
-import { getOrCreateEngineState } from "./state";
+import { getOrCreateEngineState, resolveRuntimeRoundTiming } from "./state";
 import { readTotalViewerCount } from "./viewerCount";
 
 async function adjustCountShard(ctx: any, shard: number, delta: number) {
@@ -132,13 +131,16 @@ export const heartbeat = mutation({
     if (increasedCount && engine.activeRoundId) {
       const activeRound = await ctx.db.get(engine.activeRoundId);
       if (activeRound && activeRound.phase === "voting" && activeRound.viewerVotingEndsAt) {
+        const timing = resolveRuntimeRoundTiming(engine);
         const shortenNow = Date.now();
         const remaining = activeRound.viewerVotingEndsAt - shortenNow;
-        if (remaining > VIEWER_VOTE_WINDOW_ACTIVE_MS) {
+        if (remaining > timing.viewerVoteWindowActiveMs) {
           const totalViewerCount = await readTotalViewerCount(ctx as any);
           if (totalViewerCount > 0) {
             await ctx.db.patch(activeRound._id, {
-              viewerVotingEndsAt: shortenNow + VIEWER_VOTE_WINDOW_ACTIVE_MS,
+              viewerVotingEndsAt: shortenNow + timing.viewerVoteWindowActiveMs,
+              viewerVotingWindowMs: timing.viewerVoteWindowActiveMs,
+              viewerVotingMode: "active",
               updatedAt: shortenNow,
             });
           }

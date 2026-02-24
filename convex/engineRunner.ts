@@ -17,7 +17,6 @@ import {
   ENGINE_RUNNER_VOTE_WINDOW_POLL_MIN_MS,
   MODEL_CALL_TIMEOUT_MS,
   MODEL_ATTEMPTS,
-  POST_ROUND_DELAY_MS,
   RUNNER_LEASE_HEARTBEAT_MS,
   RUNNER_LEASE_MANUAL_RENEW_MS,
   SKIPPED_ROUND_DELAY_MS,
@@ -88,6 +87,34 @@ async function leaseStillValid(ctx: any, leaseId: string, generation: number): P
   if (state.runnerLeaseId !== leaseId) return false;
   if (!state.runnerLeaseUntil || state.runnerLeaseUntil <= Date.now()) return false;
   return true;
+}
+
+function isOptimisticConcurrencyError(error: unknown): boolean {
+  if (!error) return false;
+  if (typeof error === "object" && "code" in (error as any)) {
+    return (error as any).code === "OptimisticConcurrencyControlFailure";
+  }
+  if (error instanceof Error) {
+    return /OptimisticConcurrencyControlFailure/i.test(error.message);
+  }
+  return false;
+}
+
+async function safeRenewLease(
+  ctx: any,
+  leaseId: string,
+  generation: number,
+): Promise<boolean> {
+  try {
+    const renewed = await ctx.runMutation(convexInternal.engine.renewLease, { leaseId });
+    if (renewed === true) return true;
+    return await leaseStillValid(ctx, leaseId, generation);
+  } catch (error) {
+    if (isOptimisticConcurrencyError(error)) {
+      return await leaseStillValid(ctx, leaseId, generation);
+    }
+    throw error;
+  }
 }
 
 async function withLeaseHeartbeat<T>(ctx: any, leaseId: string, fn: () => Promise<T>): Promise<T> {
@@ -166,12 +193,15 @@ export const runLoop = internalAction({
     if (!state) return null;
     if (state.runnerLeaseId !== args.leaseId) return null;
     if (!state.runnerLeaseUntil || state.runnerLeaseUntil <= Date.now()) return null;
+    const expectedGeneration = state.generation;
 
     if (state.done) {
       return null;
     }
 
-    await ctx.runMutation(convexInternal.engine.renewLease, { leaseId: args.leaseId });
+    if (!(await safeRenewLease(ctx, args.leaseId, expectedGeneration))) {
+      return null;
+    }
 
     if (state.isPaused) {
       await ctx.scheduler.runAfter(ENGINE_RUNNER_RETRY_PAUSED_MS, convexInternal.engineRunner.runLoop, {
@@ -180,7 +210,6 @@ export const runLoop = internalAction({
       return null;
     }
 
-    const expectedGeneration = state.generation;
     if (state.activeRoundId) {
       const recovery = await ctx.runMutation(convexInternal.engine.recoverStaleActiveRound, {
         expectedGeneration,
@@ -291,7 +320,7 @@ export const runLoop = internalAction({
       });
 
       await sleep(SKIPPED_ROUND_DELAY_MS);
-      await ctx.runMutation(convexInternal.engine.renewLease, { leaseId: args.leaseId });
+      if (!(await safeRenewLease(ctx, args.leaseId, expectedGeneration))) return null;
       await ctx.scheduler.runAfter(0, convexInternal.engineRunner.runLoop, { leaseId: args.leaseId });
       return null;
     }
@@ -406,7 +435,7 @@ export const runLoop = internalAction({
         error: `${modelName}: ${reason}`,
       });
       await sleep(SKIPPED_ROUND_DELAY_MS);
-      await ctx.runMutation(convexInternal.engine.renewLease, { leaseId: args.leaseId });
+      if (!(await safeRenewLease(ctx, args.leaseId, expectedGeneration))) return null;
       await ctx.scheduler.runAfter(0, convexInternal.engineRunner.runLoop, { leaseId: args.leaseId });
       return null;
     }
@@ -503,7 +532,7 @@ export const runLoop = internalAction({
 
       const now = Date.now();
       if (now - lastLeaseRenewAt >= RUNNER_LEASE_MANUAL_RENEW_MS) {
-        await ctx.runMutation(convexInternal.engine.renewLease, { leaseId: args.leaseId });
+        if (!(await safeRenewLease(ctx, args.leaseId, expectedGeneration))) return null;
         lastLeaseRenewAt = now;
       }
     }
@@ -533,10 +562,13 @@ export const runLoop = internalAction({
       roundId,
     });
 
-    await sleep(POST_ROUND_DELAY_MS);
+    const postRoundDelayMs = await ctx.runQuery(convexInternal.engine.getPostRoundDelayMs, {
+      expectedGeneration,
+    });
+    await sleep(Math.max(0, Number.isFinite(postRoundDelayMs) ? postRoundDelayMs : 0));
 
     if (!(await leaseStillValid(ctx, args.leaseId, expectedGeneration))) return null;
-    await ctx.runMutation(convexInternal.engine.renewLease, { leaseId: args.leaseId });
+    if (!(await safeRenewLease(ctx, args.leaseId, expectedGeneration))) return null;
     await ctx.scheduler.runAfter(0, convexInternal.engineRunner.runLoop, { leaseId: args.leaseId });
 
     return null;

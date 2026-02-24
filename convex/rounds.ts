@@ -38,5 +38,7 @@ export function toClientRound(round: any | null): RoundState | null {
     viewerVotesA: round.viewerVotesA,
     viewerVotesB: round.viewerVotesB,
     viewerVotingEndsAt: round.viewerVotingEndsAt,
+    viewerVotingWindowMs: round.viewerVotingWindowMs,
+    viewerVotingMode: round.viewerVotingMode,
   };
 }

@@ -51,7 +51,7 @@ bun run dev
 
 **Serviço Stream:**
 - Dockerfile: `Dockerfile.stream`
-- Envs: `BROADCAST_URL`, `STREAM_RTMP_TARGET`
+- Envs: `STREAM_RTMP_TARGET`, `VITE_CONVEX_URL`
 - Monte a pasta `music/` com faixas `bg_*.mp3`
 
 ## Variáveis de ambiente

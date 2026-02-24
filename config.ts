@@ -14,15 +14,9 @@ export const VIEWER_REAPER_BATCH = 500;
 // Limite absoluto de seguranca para o tamanho do batch do reaper.
 export const VIEWER_PRESENCE_REAPER_MAX_LIMIT = 1_000;
 
-// Duracao da janela de voto da plateia quando existe ao menos 1 espectador ativo.
-export const VIEWER_VOTE_WINDOW_ACTIVE_MS = 30_000;
-// Duracao da janela de voto da plateia quando nao ha espectadores ativos.
-export const VIEWER_VOTE_WINDOW_IDLE_MS = 120_000;
 // Delta minimo para o countdown detectar que a janela mudou (ex: de 120s para 30s).
 export const COUNTDOWN_SHORTENED_WINDOW_DETECT_DELTA_MS = 5_000;
 
-// Espera apos rodada concluida antes de iniciar a proxima (ritmo visual da transmissao).
-export const POST_ROUND_DELAY_MS = 5_000;
 // Espera apos rodada pulada por erro antes de seguir para a proxima.
 export const SKIPPED_ROUND_DELAY_MS = 10_000;
 // Duracao do lease do runner (tempo de posse do loop de execucao).

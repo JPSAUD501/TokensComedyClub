@@ -114,6 +114,7 @@ function withOptions(handler: (ctx: any, request: Request) => Promise<Response>)
 
 async function getModelsWithUsage(ctx: any) {
   const models = await ctx.runQuery(convexInternal.models.listModels, {});
+  await ctx.runMutation(convexInternal.usageBootstrap.ensureProjectionBootstrap, {});
   const usage = await ctx.runQuery(convexInternal.usage.getAdminModelUsageAverages, {});
   return {
     models,
@@ -122,6 +123,8 @@ async function getModelsWithUsage(ctx: any) {
     usageWindowSize: usage.usageWindowSize ?? 50,
     activeModelsAvgCostPerHourUsd: usage.activeModelsAvgCostPerHourUsd ?? null,
     activeModelsHourlyShareByModel: usage.activeModelsHourlyShareByModel ?? {},
+    projectionBootstrap: usage.projectionBootstrap ?? null,
+    projection: usage.projection ?? null,
   };
 }
 
@@ -131,6 +134,7 @@ for (const path of [
   "/admin/viewer-targets/delete",
   "/admin/status",
   "/admin/models",
+  "/admin/projections/settings",
   "/admin/models/update",
   "/admin/models/enable",
   "/admin/models/remove",
@@ -282,6 +286,53 @@ http.route({
     await ctx.runMutation(convexInternal.models.ensureModelCatalogSeeded, {});
     const payload = await getModelsWithUsage(ctx);
     return json(request, { ok: true, ...payload });
+  }),
+});
+
+http.route({
+  path: "/admin/projections/settings",
+  method: "POST",
+  handler: withOptions(async (ctx, request) => {
+    if (!isAuthorized(request)) {
+      return text(request, "Unauthorized", 401);
+    }
+
+    let body: unknown;
+    try {
+      body = await request.json();
+    } catch {
+      return text(request, "Invalid JSON", 400);
+    }
+
+    const payload = body as {
+      viewerVoteWindowActiveMs?: number;
+      viewerVoteWindowIdleMs?: number;
+      postRoundDelayActiveMs?: number;
+    };
+
+    const viewerVoteWindowActiveMs = Number(payload.viewerVoteWindowActiveMs);
+    const viewerVoteWindowIdleMs = Number(payload.viewerVoteWindowIdleMs);
+    const postRoundDelayActiveMs = Number(payload.postRoundDelayActiveMs);
+
+    if (!Number.isFinite(viewerVoteWindowActiveMs) || viewerVoteWindowActiveMs < 0) {
+      return text(request, "Invalid viewerVoteWindowActiveMs", 400);
+    }
+    if (!Number.isFinite(viewerVoteWindowIdleMs) || viewerVoteWindowIdleMs < 0) {
+      return text(request, "Invalid viewerVoteWindowIdleMs", 400);
+    }
+    if (!Number.isFinite(postRoundDelayActiveMs) || postRoundDelayActiveMs < 0) {
+      return text(request, "Invalid postRoundDelayActiveMs", 400);
+    }
+
+    await ctx.runMutation(convexInternal.admin.updateProjectionTimingSettings, {
+      viewerVoteWindowActiveMs,
+      viewerVoteWindowIdleMs,
+      postRoundDelayActiveMs,
+    });
+
+    const modelsPayload = await getModelsWithUsage(ctx);
+    const snapshot = await ctx.runMutation(convexInternal.admin.getSnapshot, {});
+    return json(request, { ok: true, ...modelsPayload, ...snapshot });
   }),
 });
 

@@ -48,6 +48,8 @@ export type RoundState = {
   viewerVotesA?: number;
   viewerVotesB?: number;
   viewerVotingEndsAt?: number;
+  viewerVotingWindowMs?: number;
+  viewerVotingMode?: "active" | "idle";
 };
 
 export type GameState = {

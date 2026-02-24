@@ -6,10 +6,14 @@ import {
   MODEL_PHASE_DEADLINE_MS,
   MODEL_TIMEOUT_GRACE_MS,
   RUNNER_LEASE_MS,
-  VIEWER_VOTE_WINDOW_ACTIVE_MS,
-  VIEWER_VOTE_WINDOW_IDLE_MS,
 } from "./constants";
-import { getEngineState, getOrCreateEngineState, isFiniteRuns } from "./state";
+import {
+  DEFAULT_POST_ROUND_DELAY_ACTIVE_MS,
+  getEngineState,
+  getOrCreateEngineState,
+  isFiniteRuns,
+  resolveRuntimeRoundTiming,
+} from "./state";
 import { readTotalViewerCount } from "./viewerCount";
 
 const modelReasoningEffortValidator = v.union(
@@ -40,8 +44,23 @@ const taskMetricsValidator = v.object({
   recordedAt: v.number(),
 });
 
-function getVotingWindowMs(totalViewerCount: number): number {
-  return totalViewerCount > 0 ? VIEWER_VOTE_WINDOW_ACTIVE_MS : VIEWER_VOTE_WINDOW_IDLE_MS;
+function getVotingWindowMs(
+  totalViewerCount: number,
+  timing: {
+    viewerVoteWindowActiveMs: number;
+    viewerVoteWindowIdleMs: number;
+  },
+): { mode: "active" | "idle"; windowMs: number } {
+  if (totalViewerCount > 0) {
+    return {
+      mode: "active",
+      windowMs: timing.viewerVoteWindowActiveMs,
+    };
+  }
+  return {
+    mode: "idle",
+    windowMs: timing.viewerVoteWindowIdleMs,
+  };
 }
 
 function getModelPhaseStaleThresholdMs(): number {
@@ -416,13 +435,16 @@ export const startVoting = internalMutation({
 
     const voteStart = Date.now();
     const totalViewerCount = await readTotalViewerCount(ctx as any);
-    const windowMs = getVotingWindowMs(totalViewerCount);
+    const timing = resolveRuntimeRoundTiming(state);
+    const voteWindow = getVotingWindowMs(totalViewerCount, timing);
     const votes = args.voters.map((voter) => ({ voter, startedAt: voteStart }));
 
     await ctx.db.patch(args.roundId, {
       phase: "voting",
       votes,
-      viewerVotingEndsAt: voteStart + windowMs,
+      viewerVotingEndsAt: voteStart + voteWindow.windowMs,
+      viewerVotingWindowMs: voteWindow.windowMs,
+      viewerVotingMode: voteWindow.mode,
       updatedAt: Date.now(),
     });
 
@@ -632,13 +654,14 @@ export const maybeShortenVotingWindow = internalMutation({
   handler: async (ctx) => {
     const state = await getEngineState(ctx as any);
     if (!state?.activeRoundId) return false;
+    const timing = resolveRuntimeRoundTiming(state);
 
     const round = await ctx.db.get(state.activeRoundId);
     if (!round || round.phase !== "voting" || !round.viewerVotingEndsAt) return false;
 
     const now = Date.now();
     const remaining = round.viewerVotingEndsAt - now;
-    if (remaining <= VIEWER_VOTE_WINDOW_ACTIVE_MS) {
+    if (remaining <= timing.viewerVoteWindowActiveMs) {
       return false;
     }
 
@@ -648,10 +671,32 @@ export const maybeShortenVotingWindow = internalMutation({
     }
 
     await ctx.db.patch(round._id, {
-      viewerVotingEndsAt: now + VIEWER_VOTE_WINDOW_ACTIVE_MS,
+      viewerVotingEndsAt: now + timing.viewerVoteWindowActiveMs,
+      viewerVotingWindowMs: timing.viewerVoteWindowActiveMs,
+      viewerVotingMode: "active",
       updatedAt: now,
     });
     return true;
+  },
+});
+
+export const getPostRoundDelayMs = internalQuery({
+  args: {
+    expectedGeneration: v.number(),
+  },
+  returns: v.number(),
+  handler: async (ctx, args) => {
+    const state = await getEngineState(ctx as any);
+    if (!state || state.generation !== args.expectedGeneration) {
+      return DEFAULT_POST_ROUND_DELAY_ACTIVE_MS;
+    }
+
+    const timing = resolveRuntimeRoundTiming(state);
+    const totalViewerCount = await readTotalViewerCount(ctx as any);
+    if (totalViewerCount > 0) {
+      return timing.postRoundDelayActiveMs;
+    }
+    return timing.postRoundDelayIdleMs;
   },
 });
 

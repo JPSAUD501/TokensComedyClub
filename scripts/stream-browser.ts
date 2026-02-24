@@ -20,6 +20,8 @@ const BUFSIZE = "12000k";
 const GOP = "60";
 const AUDIO_BITRATE = "160k";
 const PLAYLIST_TRACKS = 20_000;
+const BROADCAST_WAIT_TIMEOUT_MS = 30_000;
+const BROADCAST_WAIT_RETRY_MS = 1_000;
 
 function usage(): never {
   console.error("Usage: bun scripts/stream-browser.ts <live|dryrun>");
@@ -123,22 +125,29 @@ async function writePlaylistFile(tracks: string[]): Promise<string> {
 }
 
 async function assertBroadcastReachable(url: string) {
-  const timeoutMs = 5_000;
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const res = await fetch(url, { signal: controller.signal });
-    if (!res.ok) {
-      throw new Error(`HTTP ${res.status}`);
+  const deadline = Date.now() + BROADCAST_WAIT_TIMEOUT_MS;
+  let lastErrorDetail = "unknown error";
+
+  while (Date.now() < deadline) {
+    const timeoutMs = 5_000;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const res = await fetch(url, { signal: controller.signal });
+      if (res.ok) return;
+      lastErrorDetail = `HTTP ${res.status}`;
+    } catch (error) {
+      lastErrorDetail = error instanceof Error ? error.message : String(error);
+    } finally {
+      clearTimeout(timeout);
     }
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    throw new Error(
-      `Cannot reach broadcast page (${redactSensitive(detail)}). Start the app server first (bun run preview:web or bun run dev:web).`,
-    );
-  } finally {
-    clearTimeout(timeout);
+
+    await new Promise((resolve) => setTimeout(resolve, BROADCAST_WAIT_RETRY_MS));
   }
+
+  throw new Error(
+    `Cannot reach broadcast page after ${Math.round(BROADCAST_WAIT_TIMEOUT_MS / 1000)}s (${redactSensitive(lastErrorDetail)}). Start the app server first (bun run preview:web or bun run dev:web).`,
+  );
 }
 
 function buildFfmpegArgs(currentMode: Mode, playlistPath: string): string[] {

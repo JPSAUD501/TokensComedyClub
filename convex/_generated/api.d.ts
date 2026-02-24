@@ -21,6 +21,8 @@ import type * as platformViewers from "../platformViewers.js";
 import type * as rounds from "../rounds.js";
 import type * as state from "../state.js";
 import type * as usage from "../usage.js";
+import type * as usageBootstrap from "../usageBootstrap.js";
+import type * as usageBootstrapRunner from "../usageBootstrapRunner.js";
 import type * as viewerCount from "../viewerCount.js";
 import type * as viewers from "../viewers.js";
 
@@ -44,6 +46,8 @@ declare const fullApi: ApiFromModules<{
   rounds: typeof rounds;
   state: typeof state;
   usage: typeof usage;
+  usageBootstrap: typeof usageBootstrap;
+  usageBootstrapRunner: typeof usageBootstrapRunner;
   viewerCount: typeof viewerCount;
   viewers: typeof viewers;
 }>;

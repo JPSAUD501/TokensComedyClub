@@ -52,6 +52,73 @@ type HourlyUsageSummary = {
   windowHours: number | null;
   avgCostPerHourUsd: number | null;
 };
+type ProjectionTiming = {
+  viewerVoteWindowActiveMs: number;
+  viewerVoteWindowIdleMs: number;
+  postRoundDelayActiveMs: number;
+  postRoundDelayIdleMs: number;
+};
+type ProjectionPayload = {
+  timing: ProjectionTiming;
+  samples: {
+    rounds: number;
+    events: number;
+    roundCosts: number;
+    gaps: number;
+  };
+  roleCounts: {
+    promptCapable: number;
+    answerCapable: number;
+    voteCapable: number;
+  };
+  expectedRequestsPerRound: {
+    prompt: number;
+    answer: number;
+    vote: number;
+    total: number;
+  };
+  viewerRoundShare: number;
+  confidencePercent: number;
+  costs: {
+    perRequestUsd: {
+      prompt: number;
+      answer: number;
+      vote: number;
+    };
+    perRoundUsd: {
+      prompt: number;
+      answer: number;
+      vote: number;
+      total: number;
+      modeledTotal: number;
+      historicalTotal: null;
+    };
+  };
+  timingsMs: {
+    nonVoting: number | null;
+    voteWindowEffective: number | null;
+    postRoundDelayEffective: number | null;
+    extraInterRound: number | null;
+    roundCycle: number | null;
+  };
+  rates: {
+    roundsPerHour: number | null;
+    hourlyCostUsd: number | null;
+    promptHourlyUsd: number | null;
+    answerHourlyUsd: number | null;
+    voteHourlyUsd: number | null;
+  };
+};
+type ProjectionBootstrapPayload = {
+  status: "ready" | "running" | "failed";
+  running: boolean;
+  runId: string | null;
+  startedAt: number | null;
+  finishedAt: number | null;
+  error: string | null;
+  requiredSamplesPerAction: number;
+  missingSamplesByModelAction: Record<string, { prompt: number; answer: number; vote: number }>;
+};
 type ModelUsageRow = {
   prompt: UsageSummary;
   answer: UsageSummary;
@@ -65,8 +132,9 @@ type ModelsResponse = {
   usageByModel?: UsageByModel;
   usageHourlyByModel?: UsageHourlyByModel;
   usageWindowSize?: number;
-  activeModelsAvgCostPerHourUsd?: number | null;
   activeModelsHourlyShareByModel?: Record<string, number>;
+  projectionBootstrap?: ProjectionBootstrapPayload | null;
+  projection?: ProjectionPayload;
 } & Partial<AdminSnapshot>;
 type Mode = "checking" | "locked" | "ready";
 type AdminPage = "operations" | "models" | "targets" | "projections";
@@ -184,26 +252,48 @@ function formatUsd(value: number | null): string {
   return `US$${value.toFixed(value < 0.01 ? 4 : 3)}`;
 }
 
-function formatUsageLine(label: string, summary?: UsageSummary): string {
-  if (!summary) return `${label}: N/D (0/0)`;
-  const avg = formatUsd(summary.avgCostUsd);
-  return `${label}: ${avg} (${summary.sampleSize}/${summary.denominator})`;
+function formatModelSamplesLine(usage: ModelUsageRow | undefined): string {
+  const promptSamples = usage?.prompt?.sampleSize ?? 0;
+  const answerSamples = usage?.answer?.sampleSize ?? 0;
+  const voteSamples = usage?.vote?.sampleSize ?? 0;
+  return `Samples: P ${promptSamples} | R ${answerSamples} | V ${voteSamples}`;
 }
 
-function formatHourlyUsageLine(summary?: HourlyUsageSummary): string {
-  if (!summary) return "Media/h: N/D";
-  const avg = formatUsd(summary.avgCostPerHourUsd);
-  const windowHours = summary.windowHours;
-  const windowLabel =
-    windowHours !== null && Number.isFinite(windowHours)
-      ? `${windowHours.toFixed(windowHours < 10 ? 2 : 1)}h`
-      : "N/D";
-  return `Media/h: ${avg} (${summary.sampleSize} req, janela ${windowLabel})`;
+function formatModelHourlyCostLine(summary?: HourlyUsageSummary): string {
+  const avg = formatUsd(summary?.avgCostPerHourUsd ?? null);
+  return `Custo/h: ${avg}`;
 }
 
 function formatPercent(value: number): string {
   if (!Number.isFinite(value) || value <= 0) return "0.0%";
   return `${value.toFixed(1)}%`;
+}
+
+function formatSecondsFromMs(value: number | null): string {
+  if (value === null || !Number.isFinite(value)) return "N/D";
+  const seconds = value / 1000;
+  if (seconds >= 100) return `${seconds.toFixed(0)}s`;
+  if (seconds >= 10) return `${seconds.toFixed(1)}s`;
+  return `${seconds.toFixed(2)}s`;
+}
+
+function countMissingBootstrapSamples(bootstrap?: ProjectionBootstrapPayload | null): number {
+  if (!bootstrap) return 0;
+  return Object.values(bootstrap.missingSamplesByModelAction).reduce(
+    (sum, item) => sum + item.prompt + item.answer + item.vote,
+    0,
+  );
+}
+
+function msToSecondsInput(valueMs: number): string {
+  if (!Number.isFinite(valueMs)) return "0";
+  const seconds = valueMs / 1000;
+  const rounded = Math.round(seconds * 10) / 10;
+  return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
+}
+
+function secondsInputToMs(value: string): number {
+  return Math.round(safePositive(Number(value)) * 1000);
 }
 
 async function readErrorMessage(res: Response): Promise<string> {
@@ -252,10 +342,10 @@ function App() {
   const [usageByModel, setUsageByModel] = useState<UsageByModel>({});
   const [usageHourlyByModel, setUsageHourlyByModel] = useState<UsageHourlyByModel>({});
   const [usageWindowSize, setUsageWindowSize] = useState(50);
-  const [activeModelsAvgCostPerHourUsd, setActiveModelsAvgCostPerHourUsd] = useState<number | null>(null);
   const [activeModelsHourlyShareByModel, setActiveModelsHourlyShareByModel] = useState<Record<string, number>>(
     {},
   );
+  const [projectionBootstrap, setProjectionBootstrap] = useState<ProjectionBootstrapPayload | null>(null);
   const [viewerTargets, setViewerTargets] = useState<ViewerTarget[]>([]);
   const [passcode, setPasscode] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -284,6 +374,10 @@ function App() {
   const [modelRoleFilter, setModelRoleFilter] = useState<ModelRoleFilter>("all");
   const [modelSort, setModelSort] = useState<ModelSort>("cost_desc");
   const [activePage, setActivePage] = useState<AdminPage>(() => readAdminPageFromLocation());
+  const [projection, setProjection] = useState<ProjectionPayload | null>(null);
+  const [voteWindowActiveSecondsInput, setVoteWindowActiveSecondsInput] = useState("30");
+  const [voteWindowIdleSecondsInput, setVoteWindowIdleSecondsInput] = useState("120");
+  const [postRoundDelayActiveSecondsInput, setPostRoundDelayActiveSecondsInput] = useState("5");
   const [calcHoursPerDayInput, setCalcHoursPerDayInput] = useState("8");
   const [calcDaysPerWeekInput, setCalcDaysPerWeekInput] = useState("5");
   const [calcDaysPerMonthInput, setCalcDaysPerMonthInput] = useState("22");
@@ -301,11 +395,16 @@ function App() {
     setUsageByModel(response.usageByModel ?? {});
     setUsageHourlyByModel(response.usageHourlyByModel ?? {});
     setUsageWindowSize(response.usageWindowSize ?? 50);
-    const activeTotal = response.activeModelsAvgCostPerHourUsd;
-    setActiveModelsAvgCostPerHourUsd(
-      Number.isFinite(activeTotal) ? Number(activeTotal) : null,
-    );
     setActiveModelsHourlyShareByModel(response.activeModelsHourlyShareByModel ?? {});
+    setProjectionBootstrap(response.projectionBootstrap ?? null);
+    if (response.projection) {
+      setProjection(response.projection);
+      setVoteWindowActiveSecondsInput(msToSecondsInput(response.projection.timing.viewerVoteWindowActiveMs));
+      setVoteWindowIdleSecondsInput(msToSecondsInput(response.projection.timing.viewerVoteWindowIdleMs));
+      setPostRoundDelayActiveSecondsInput(msToSecondsInput(response.projection.timing.postRoundDelayActiveMs));
+    } else {
+      setProjection(null);
+    }
   }
 
   async function loadModels(passcodeToUse: string) {
@@ -336,8 +435,9 @@ function App() {
           setUsageByModel({});
           setUsageHourlyByModel({});
           setUsageWindowSize(50);
-          setActiveModelsAvgCostPerHourUsd(null);
           setActiveModelsHourlyShareByModel({});
+          setProjectionBootstrap(null);
+          setProjection(null);
         }
       })
       .catch(() => {
@@ -423,34 +523,104 @@ function App() {
       }),
     [activeModels, usageHourlyByModel],
   );
-  const fallbackActiveModelsAvgCostPerHourUsd = useMemo(() => {
-    const total = activeHourlyUsageRows.reduce((sum, row) => sum + row.avgCostPerHourUsd, 0);
-    return total > 0 ? total : null;
-  }, [activeHourlyUsageRows]);
-  const totalHourlyCostUsd = useMemo(() => {
-    if (activeModelsAvgCostPerHourUsd !== null && Number.isFinite(activeModelsAvgCostPerHourUsd)) {
-      return activeModelsAvgCostPerHourUsd;
-    }
-    return fallbackActiveModelsAvgCostPerHourUsd;
-  }, [activeModelsAvgCostPerHourUsd, fallbackActiveModelsAvgCostPerHourUsd]);
+  const projectionMissingSamples = useMemo(
+    () => countMissingBootstrapSamples(projectionBootstrap),
+    [projectionBootstrap],
+  );
+  const projectionReady = useMemo(() => {
+    if (!projection) return false;
+    if (projectionMissingSamples <= 0) return true;
+    return projectionBootstrap?.status === "ready";
+  }, [projection, projectionBootstrap?.status, projectionMissingSamples]);
+  const projectionBootstrapFailed = projectionBootstrap?.status === "failed" && projectionMissingSamples > 0;
+  const shouldShowProjectionBootstrapBanner = !projection || projectionMissingSamples > 0 || projectionBootstrapFailed;
   const activeHourlyShareRows = useMemo(
     () =>
       activeHourlyUsageRows
         .map((row) => {
           const serverShare = activeModelsHourlyShareByModel[row.modelId];
-          const fallbackShare =
-            totalHourlyCostUsd && totalHourlyCostUsd > 0
-              ? (row.avgCostPerHourUsd / totalHourlyCostUsd) * 100
-              : 0;
-          const sharePercent = Number.isFinite(serverShare) ? Number(serverShare) : fallbackShare;
+          const sharePercent = Number.isFinite(serverShare) ? Number(serverShare) : 0;
           return {
             ...row,
             sharePercent,
           };
         })
         .sort((a, b) => b.sharePercent - a.sharePercent),
-    [activeHourlyUsageRows, activeModelsHourlyShareByModel, totalHourlyCostUsd],
+    [activeHourlyUsageRows, activeModelsHourlyShareByModel],
   );
+  const voteWindowActiveMs = useMemo(
+    () => secondsInputToMs(voteWindowActiveSecondsInput),
+    [voteWindowActiveSecondsInput],
+  );
+  const voteWindowIdleMs = useMemo(
+    () => secondsInputToMs(voteWindowIdleSecondsInput),
+    [voteWindowIdleSecondsInput],
+  );
+  const postRoundDelayActiveMs = useMemo(
+    () => secondsInputToMs(postRoundDelayActiveSecondsInput),
+    [postRoundDelayActiveSecondsInput],
+  );
+  const projectionViewerRoundShare = useMemo(() => {
+    if (projection) return Math.max(0, Math.min(1, projection.viewerRoundShare));
+    return (snapshot?.viewerCount ?? 0) > 0 ? 1 : 0;
+  }, [projection, snapshot?.viewerCount]);
+  const effectiveVoteWindowMs = useMemo(() => {
+    if (!projection) return null;
+    return (
+      projectionViewerRoundShare * voteWindowActiveMs +
+      (1 - projectionViewerRoundShare) * voteWindowIdleMs
+    );
+  }, [projection, projectionViewerRoundShare, voteWindowActiveMs, voteWindowIdleMs]);
+  const effectivePostRoundDelayMs = useMemo(() => {
+    if (!projection) return null;
+    const idleDelay = projection.timing.postRoundDelayIdleMs;
+    const extra = projection.timingsMs.extraInterRound ?? 0;
+    return (
+      projectionViewerRoundShare * postRoundDelayActiveMs +
+      (1 - projectionViewerRoundShare) * idleDelay +
+      extra
+    );
+  }, [projection, projectionViewerRoundShare, postRoundDelayActiveMs]);
+  const projectedRoundCycleMs = useMemo(() => {
+    if (
+      !projectionReady ||
+      !projection ||
+      projection.timingsMs.nonVoting === null ||
+      effectiveVoteWindowMs === null ||
+      effectivePostRoundDelayMs === null
+    ) {
+      return null;
+    }
+    return Math.max(1, projection.timingsMs.nonVoting + effectiveVoteWindowMs + effectivePostRoundDelayMs);
+  }, [projection, projectionReady, effectivePostRoundDelayMs, effectiveVoteWindowMs]);
+  const projectedRoundsPerHour = useMemo(() => {
+    if (projectedRoundCycleMs === null || projectedRoundCycleMs <= 0) return null;
+    return 3_600_000 / projectedRoundCycleMs;
+  }, [projectedRoundCycleMs]);
+  const projectedRoundCostUsd = useMemo(() => {
+    if (!projectionReady || !projection) return null;
+    const total = projection.costs.perRoundUsd.total;
+    return Number.isFinite(total) ? total : null;
+  }, [projection, projectionReady]);
+  const projectedTotalHourlyCostUsd = useMemo(() => {
+    if (projectedRoundCostUsd === null || projectedRoundsPerHour === null) return null;
+    return projectedRoundCostUsd * projectedRoundsPerHour;
+  }, [projectedRoundCostUsd, projectedRoundsPerHour]);
+  const totalHourlyCostUsd = useMemo(
+    () =>
+      projectedTotalHourlyCostUsd !== null && Number.isFinite(projectedTotalHourlyCostUsd)
+        ? projectedTotalHourlyCostUsd
+        : null,
+    [projectedTotalHourlyCostUsd],
+  );
+  const isProjectionTimingDirty = useMemo(() => {
+    if (!projection) return false;
+    return (
+      voteWindowActiveMs !== projection.timing.viewerVoteWindowActiveMs ||
+      voteWindowIdleMs !== projection.timing.viewerVoteWindowIdleMs ||
+      postRoundDelayActiveMs !== projection.timing.postRoundDelayActiveMs
+    );
+  }, [postRoundDelayActiveMs, projection, voteWindowActiveMs, voteWindowIdleMs]);
   const projectedDailyCostUsd = useMemo(
     () => (totalHourlyCostUsd !== null ? totalHourlyCostUsd * 24 : null),
     [totalHourlyCostUsd],
@@ -485,9 +655,20 @@ function App() {
     [activeHourlyShareRows, usageByModel, modelsById],
   );
   const actionTotals = useMemo(() => {
-    const promptHourlyUsd = activeHourlyCompositionRows.reduce((sum, row) => sum + row.promptHourlyUsd, 0);
-    const answerHourlyUsd = activeHourlyCompositionRows.reduce((sum, row) => sum + row.answerHourlyUsd, 0);
-    const voteHourlyUsd = activeHourlyCompositionRows.reduce((sum, row) => sum + row.voteHourlyUsd, 0);
+    if (!projectionReady || !projection || projectedRoundsPerHour === null) {
+      return {
+        promptHourlyUsd: 0,
+        answerHourlyUsd: 0,
+        voteHourlyUsd: 0,
+        promptPercent: 0,
+        answerPercent: 0,
+        votePercent: 0,
+      };
+    }
+
+    const promptHourlyUsd = projection.costs.perRoundUsd.prompt * projectedRoundsPerHour;
+    const answerHourlyUsd = projection.costs.perRoundUsd.answer * projectedRoundsPerHour;
+    const voteHourlyUsd = projection.costs.perRoundUsd.vote * projectedRoundsPerHour;
     const total = promptHourlyUsd + answerHourlyUsd + voteHourlyUsd;
     return {
       promptHourlyUsd,
@@ -497,7 +678,7 @@ function App() {
       answerPercent: total > 0 ? (answerHourlyUsd / total) * 100 : 0,
       votePercent: total > 0 ? (voteHourlyUsd / total) * 100 : 0,
     };
-  }, [activeHourlyCompositionRows]);
+  }, [projectedRoundsPerHour, projection, projectionReady]);
   const calcHoursPerDay = useMemo(() => safePositive(Number(calcHoursPerDayInput)), [calcHoursPerDayInput]);
   const calcDaysPerWeek = useMemo(() => safePositive(Number(calcDaysPerWeekInput)), [calcDaysPerWeekInput]);
   const calcDaysPerMonth = useMemo(() => safePositive(Number(calcDaysPerMonthInput)), [calcDaysPerMonthInput]);
@@ -755,6 +936,32 @@ function App() {
     }
   }
 
+  async function onSaveProjectionTiming() {
+    if (!projection) return;
+
+    setError(null);
+    setPending("save-projection-timing");
+    try {
+      const passcodeValue = readStoredPasscode();
+      const data = await requestAdminJson<ModelsResponse>("/admin/projections/settings", passcodeValue, {
+        method: "POST",
+        body: JSON.stringify({
+          viewerVoteWindowActiveMs: voteWindowActiveMs,
+          viewerVoteWindowIdleMs: voteWindowIdleMs,
+          postRoundDelayActiveMs,
+        }),
+      });
+      setModels(data.models);
+      applyUsagePayload(data);
+      const status = await requestAdminJson<AdminResponse>("/admin/status", passcodeValue);
+      setSnapshot(status);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Falha ao salvar tempos de projecao");
+    } finally {
+      setPending(null);
+    }
+  }
+
   async function onSaveModel(event: React.FormEvent) {
     event.preventDefault();
     setError(null);
@@ -888,8 +1095,12 @@ function App() {
       setUsageByModel({});
       setUsageHourlyByModel({});
       setUsageWindowSize(50);
-      setActiveModelsAvgCostPerHourUsd(null);
       setActiveModelsHourlyShareByModel({});
+      setProjectionBootstrap(null);
+      setProjection(null);
+      setVoteWindowActiveSecondsInput("30");
+      setVoteWindowIdleSecondsInput("120");
+      setPostRoundDelayActiveSecondsInput("5");
       setViewerTargets([]);
       setPasscode("");
       resetTargetForm();
@@ -1227,10 +1438,8 @@ function App() {
                         </div>
 
                         <div className="model-card__usage">
-                          <span>{formatHourlyUsageLine(hourlyUsage)}</span>
-                          <span>{formatUsageLine("Prompt avg", usage?.prompt)}</span>
-                          <span>{formatUsageLine("Resposta avg", usage?.answer)}</span>
-                          <span>{formatUsageLine("Voto avg", usage?.vote)}</span>
+                          <span>{formatModelHourlyCostLine(hourlyUsage)}</span>
+                          <span>{formatModelSamplesLine(usage)}</span>
                         </div>
 
                         <div className="model-card__actions">
@@ -1418,7 +1627,7 @@ function App() {
               <div>
                 <h2>Projecoes e Calculo de Preco</h2>
                 <p className="muted">
-                  Baseado nas ultimas {usageWindowSize} requests por tipo, com divisao por modelo e por acao.
+                  Baseado em custos recentes, intervalos observados e quantidade de modelos por papel.
                 </p>
               </div>
               <button type="button" className="btn" disabled={busy} onClick={onRefreshModels}>
@@ -1426,9 +1635,17 @@ function App() {
               </button>
             </div>
 
+            {shouldShowProjectionBootstrapBanner && (
+              <div className="error-banner">
+                {projectionBootstrapFailed
+                  ? `Falha ao gerar baseline de projecao. Faltam ${projectionMissingSamples} samples.`
+                  : `Gerando baseline real para projecao. Faltam ${projectionMissingSamples} samples.`}
+              </div>
+            )}
+
             <div className="models__hourly-cards">
               <div className="hour-card">
-                <span className="hour-card__label">Media/h total (modelos ativos)</span>
+                <span className="hour-card__label">Media/h estimada</span>
                 <strong className="hour-card__value">{formatUsd(totalHourlyCostUsd)}</strong>
               </div>
               <div className="hour-card">
@@ -1445,12 +1662,100 @@ function App() {
               </div>
             </div>
 
+            <div className="models__hourly-cards">
+              <div className="hour-card">
+                <span className="hour-card__label">Rodadas por hora</span>
+                <strong className="hour-card__value">
+                  {projectedRoundsPerHour === null ? "N/D" : projectedRoundsPerHour.toFixed(2)}
+                </strong>
+              </div>
+              <div className="hour-card">
+                <span className="hour-card__label">Custo por rodada</span>
+                <strong className="hour-card__value">{formatUsd(projectedRoundCostUsd)}</strong>
+              </div>
+              <div className="hour-card">
+                <span className="hour-card__label">Ciclo medio por rodada</span>
+                <strong className="hour-card__value">{formatSecondsFromMs(projectedRoundCycleMs)}</strong>
+              </div>
+              <div className="hour-card">
+                <span className="hour-card__label">Confianca da previsao</span>
+                <strong className="hour-card__value">
+                  {projectionReady && projection ? `${projection.confidencePercent}%` : "N/D"}
+                </strong>
+              </div>
+            </div>
+
             <div className="projections__workspace">
               <aside className="projections__calculator">
                 <h3>Calculadora</h3>
                 <p className="muted">
-                  Ajuste carga diaria e budget para prever gasto.
+                  Ajuste tempos de votacao e intervalo para recalcular custo em tempo real.
                 </p>
+                <div className="projections__fields">
+                  <label className="field-label" htmlFor="proj-vote-active">
+                    Votacao com espectadores (s)
+                  </label>
+                  <input
+                    id="proj-vote-active"
+                    className="text-input"
+                    type="number"
+                    min={5}
+                    step={0.5}
+                    value={voteWindowActiveSecondsInput}
+                    onChange={(event) => setVoteWindowActiveSecondsInput(event.target.value)}
+                    disabled={busy || !projection}
+                  />
+
+                  <label className="field-label" htmlFor="proj-vote-idle">
+                    Votacao sem espectadores (s)
+                  </label>
+                  <input
+                    id="proj-vote-idle"
+                    className="text-input"
+                    type="number"
+                    min={5}
+                    step={0.5}
+                    value={voteWindowIdleSecondsInput}
+                    onChange={(event) => setVoteWindowIdleSecondsInput(event.target.value)}
+                    disabled={busy || !projection}
+                  />
+
+                  <label className="field-label" htmlFor="proj-delay-active">
+                    Intervalo com espectadores (s)
+                  </label>
+                  <input
+                    id="proj-delay-active"
+                    className="text-input"
+                    type="number"
+                    min={0}
+                    step={0.5}
+                    value={postRoundDelayActiveSecondsInput}
+                    onChange={(event) => setPostRoundDelayActiveSecondsInput(event.target.value)}
+                    disabled={busy || !projection}
+                  />
+                </div>
+
+                <div className="projections__timing-actions">
+                  <button
+                    type="button"
+                    className="btn btn--primary"
+                    disabled={busy || !projection || !isProjectionTimingDirty}
+                    onClick={onSaveProjectionTiming}
+                  >
+                    {pending === "save-projection-timing" ? "Salvando..." : "Salvar tempos da rodada"}
+                  </button>
+                  <span className="projections__timing-note">
+                    Intervalo sem espectadores:{" "}
+                    {projection ? formatSecondsFromMs(projection.timing.postRoundDelayIdleMs) : "N/D"}
+                  </span>
+                  <span className="projections__timing-note">
+                    Share com espectadores: {formatPercent(projectionViewerRoundShare * 100)}
+                  </span>
+                  <span className="projections__timing-note">
+                    Amostras: {projection?.samples.rounds ?? 0} rodadas, {projection?.samples.events ?? 0} requests
+                  </span>
+                </div>
+
                 <div className="projections__fields">
                   <label className="field-label" htmlFor="calc-hours-day">
                     Horas por dia
@@ -1572,6 +1877,12 @@ function App() {
                     </span>
                     <span>
                       Voto: {formatUsd(actionTotals.voteHourlyUsd)}/h ({formatPercent(actionTotals.votePercent)})
+                    </span>
+                    <span>
+                      Janela de voto efetiva: {formatSecondsFromMs(effectiveVoteWindowMs)}
+                    </span>
+                    <span>
+                      Intervalo efetivo: {formatSecondsFromMs(effectivePostRoundDelayMs)}
                     </span>
                   </div>
                 </div>
@@ -1852,5 +2163,6 @@ function App() {
 
 const root = createRoot(document.getElementById("root")!);
 root.render(<App />);
+
 
 

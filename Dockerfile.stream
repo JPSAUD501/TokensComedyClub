@@ -12,5 +12,6 @@ COPY . .
 
 ENV NODE_ENV=production
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+ENV BROADCAST_URL=http://127.0.0.1:5109/broadcast.html
 
-CMD ["bun", "run", "start:stream"]
+CMD ["sh", "./scripts/start-stream-container.sh"]
