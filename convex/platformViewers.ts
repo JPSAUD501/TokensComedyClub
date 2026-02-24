@@ -2,7 +2,11 @@ import { v } from "convex/values";
 import { internalAction, internalMutation, internalQuery } from "./_generated/server";
 import { internal } from "./_generated/api";
 const convexInternal = internal as any;
-import { PLATFORM_VIEWER_POLL_INTERVAL_MS } from "./constants";
+import {
+  PLATFORM_VIEWER_POLL_INTERVAL_MS,
+  TWITCH_API_BATCH_SIZE,
+  YOUTUBE_API_BATCH_SIZE,
+} from "./constants";
 import { getOrCreateEngineState } from "./state";
 
 type Platform = "twitch" | "youtube";
@@ -78,7 +82,7 @@ async function pollTwitchTargets(targets: PollTarget[]): Promise<PollUpdate[]> {
   try {
     const token = await getTwitchAccessToken();
     const updates = new Map<string, PollUpdate>();
-    for (const group of chunk(targets, 100)) {
+    for (const group of chunk(targets, TWITCH_API_BATCH_SIZE)) {
       const params = new URLSearchParams();
       for (const target of group) {
         params.append("user_login", target.target);
@@ -139,7 +143,7 @@ async function pollYouTubeTargets(targets: PollTarget[]): Promise<PollUpdate[]> 
 
   try {
     const updates = new Map<string, PollUpdate>();
-    for (const group of chunk(targets, 50)) {
+    for (const group of chunk(targets, YOUTUBE_API_BATCH_SIZE)) {
       const ids = group.map((target) => target.target).join(",");
       const params = new URLSearchParams({
         part: "liveStreamingDetails",

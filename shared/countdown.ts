@@ -1,5 +1,11 @@
-export const VOTING_WINDOW_ACTIVE_MS = 30_000;
-export const VOTING_WINDOW_IDLE_MS = 120_000;
+import {
+  COUNTDOWN_SHORTENED_WINDOW_DETECT_DELTA_MS,
+  VIEWER_VOTE_WINDOW_ACTIVE_MS,
+  VIEWER_VOTE_WINDOW_IDLE_MS,
+} from "../config";
+
+export const VOTING_WINDOW_ACTIVE_MS = VIEWER_VOTE_WINDOW_ACTIVE_MS;
+export const VOTING_WINDOW_IDLE_MS = VIEWER_VOTE_WINDOW_IDLE_MS;
 
 export type VotingRoundLike = {
   _id?: string;
@@ -85,7 +91,7 @@ export function createVotingCountdownTracker() {
     } else if (
       windowMs === VOTING_WINDOW_IDLE_MS &&
       lastRemainingMs !== null &&
-      lastRemainingMs - remainingMs > 5_000
+      lastRemainingMs - remainingMs > COUNTDOWN_SHORTENED_WINDOW_DETECT_DELTA_MS
     ) {
       // Window was shortened dynamically from 120s to 30s.
       windowMs = VOTING_WINDOW_ACTIVE_MS;

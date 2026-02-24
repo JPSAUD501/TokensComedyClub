@@ -444,6 +444,8 @@ export const setModelVote = internalMutation({
     const round = await ctx.db.get(args.roundId);
     if (!state || !round) return false;
     if (state.generation !== args.expectedGeneration || round.generation !== args.expectedGeneration) return false;
+    if (state.activeRoundId !== args.roundId) return false;
+    if (round.phase !== "voting") return false;
     if (args.voteIndex < 0 || args.voteIndex >= round.votes.length) return false;
 
     const votes = [...round.votes];
@@ -562,7 +564,7 @@ export const recoverStaleActiveRound = internalMutation({
         phase: "done",
         answerTasks,
         skipped: true,
-        skipReason: round.skipReason ?? "Falha na resposta (timeout 60s)",
+        skipReason: round.skipReason ?? `Falha na resposta (timeout ${Math.round(MODEL_CALL_TIMEOUT_MS / 1000)}s)`,
         skipType: "answer_error",
         completedAt: now,
         updatedAt: now,

@@ -17,6 +17,9 @@ const modelValidator = v.object({
   logoId: v.optional(v.string()),
   reasoningEffort: v.optional(modelReasoningEffortValidator),
   metricsEpoch: v.optional(v.number()),
+  canPrompt: v.optional(v.boolean()),
+  canAnswer: v.optional(v.boolean()),
+  canVote: v.optional(v.boolean()),
 });
 
 const llmDurationSourceValidator = v.union(
@@ -64,6 +67,9 @@ export default defineSchema({
     reasoningEffort: v.optional(modelReasoningEffortValidator),
     metricsEpoch: v.optional(v.number()),
     enabled: v.boolean(),
+    canPrompt: v.optional(v.boolean()),
+    canAnswer: v.optional(v.boolean()),
+    canVote: v.optional(v.boolean()),
     archivedAt: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),

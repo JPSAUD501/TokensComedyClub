@@ -4,6 +4,7 @@ import {
   AVAILABLE_MODEL_LOGO_IDS,
   DEFAULT_MODEL_REASONING_EFFORT,
   isValidModelLogoId,
+  normalizeModelActionEnabled,
   parseModelReasoningEffort,
   normalizeHexColor,
   toRuntimeModel,
@@ -14,11 +15,23 @@ import { getOrCreateEngineState } from "./state";
 
 export const MIN_ACTIVE_MODELS = 3;
 
-export type RunBlockedReason = "insufficient_active_models" | null;
+export type RunBlockedReason =
+  | "insufficient_active_models"
+  | "insufficient_role_coverage"
+  | null;
 
 type SeedModel = Pick<
   ModelCatalogEntry,
-  "modelId" | "name" | "color" | "logoId" | "reasoningEffort" | "enabled" | "metricsEpoch"
+  | "modelId"
+  | "name"
+  | "color"
+  | "logoId"
+  | "reasoningEffort"
+  | "enabled"
+  | "metricsEpoch"
+  | "canPrompt"
+  | "canAnswer"
+  | "canVote"
 >;
 
 const reasoningEffortValidator = v.union(
@@ -40,6 +53,9 @@ const LEGACY_MODEL_SEED: SeedModel[] = [
     reasoningEffort: "medium",
     metricsEpoch: 1,
     enabled: true,
+    canPrompt: true,
+    canAnswer: true,
+    canVote: true,
   },
   {
     modelId: "moonshotai/kimi-k2-0905",
@@ -49,6 +65,9 @@ const LEGACY_MODEL_SEED: SeedModel[] = [
     reasoningEffort: "medium",
     metricsEpoch: 1,
     enabled: true,
+    canPrompt: true,
+    canAnswer: true,
+    canVote: true,
   },
   {
     modelId: "deepseek/deepseek-v3.2",
@@ -58,6 +77,9 @@ const LEGACY_MODEL_SEED: SeedModel[] = [
     reasoningEffort: "medium",
     metricsEpoch: 1,
     enabled: true,
+    canPrompt: true,
+    canAnswer: true,
+    canVote: true,
   },
   {
     modelId: "minimax/minimax-m2.5",
@@ -67,6 +89,9 @@ const LEGACY_MODEL_SEED: SeedModel[] = [
     reasoningEffort: "medium",
     metricsEpoch: 1,
     enabled: true,
+    canPrompt: true,
+    canAnswer: true,
+    canVote: true,
   },
   {
     modelId: "z-ai/glm-5",
@@ -76,6 +101,9 @@ const LEGACY_MODEL_SEED: SeedModel[] = [
     reasoningEffort: "medium",
     metricsEpoch: 1,
     enabled: true,
+    canPrompt: true,
+    canAnswer: true,
+    canVote: true,
   },
   {
     modelId: "openai/gpt-5.2",
@@ -85,6 +113,9 @@ const LEGACY_MODEL_SEED: SeedModel[] = [
     reasoningEffort: "medium",
     metricsEpoch: 1,
     enabled: true,
+    canPrompt: true,
+    canAnswer: true,
+    canVote: true,
   },
   {
     modelId: "anthropic/claude-sonnet-4.6",
@@ -94,6 +125,9 @@ const LEGACY_MODEL_SEED: SeedModel[] = [
     reasoningEffort: "medium",
     metricsEpoch: 1,
     enabled: true,
+    canPrompt: true,
+    canAnswer: true,
+    canVote: true,
   },
   {
     modelId: "x-ai/grok-4.1-fast",
@@ -103,6 +137,9 @@ const LEGACY_MODEL_SEED: SeedModel[] = [
     reasoningEffort: "medium",
     metricsEpoch: 1,
     enabled: true,
+    canPrompt: true,
+    canAnswer: true,
+    canVote: true,
   },
 ];
 
@@ -126,6 +163,9 @@ function toCatalogEntry(row: any): ModelCatalogEntry {
     reasoningEffort: parseModelReasoningEffort(row.reasoningEffort),
     metricsEpoch: Number.isFinite(row.metricsEpoch) ? row.metricsEpoch : 1,
     enabled: Boolean(row.enabled),
+    canPrompt: normalizeModelActionEnabled(row.canPrompt),
+    canAnswer: normalizeModelActionEnabled(row.canAnswer),
+    canVote: normalizeModelActionEnabled(row.canVote),
     archivedAt: row.archivedAt,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
@@ -147,17 +187,58 @@ export function getEnabledModelIds(models: ModelCatalogEntry[]): string[] {
     .map((model) => model.modelId);
 }
 
+function getActiveModels(models: ModelCatalogEntry[]): ModelCatalogEntry[] {
+  return models.filter((model) => model.enabled && !model.archivedAt);
+}
+
+function hasRoundRoleCoverage(activeModels: ModelCatalogEntry[]): boolean {
+  const promptPool = activeModels.filter((model) => model.canPrompt);
+  const answerPool = activeModels.filter((model) => model.canAnswer);
+  const votePool = activeModels.filter((model) => model.canVote);
+
+  if (promptPool.length === 0 || answerPool.length < 2 || votePool.length === 0) {
+    return false;
+  }
+
+  for (const prompter of promptPool) {
+    const contestantCandidates = answerPool.filter((candidate) => candidate.modelId !== prompter.modelId);
+    if (contestantCandidates.length < 2) continue;
+
+    for (let i = 0; i < contestantCandidates.length - 1; i += 1) {
+      const contA = contestantCandidates[i]!;
+      for (let j = i + 1; j < contestantCandidates.length; j += 1) {
+        const contB = contestantCandidates[j]!;
+        const voters = votePool.filter(
+          (model) => model.modelId !== contA.modelId && model.modelId !== contB.modelId,
+        );
+        if (voters.length > 0) {
+          return true;
+        }
+      }
+    }
+  }
+
+  return false;
+}
+
 export function computeRunStatus(models: ModelCatalogEntry[]): {
   activeModelCount: number;
   canRunRounds: boolean;
   runBlockedReason: RunBlockedReason;
 } {
-  const activeModelCount = getEnabledModelIds(models).length;
-  const canRunRounds = activeModelCount >= MIN_ACTIVE_MODELS;
+  const activeModels = getActiveModels(models);
+  const activeModelCount = activeModels.length;
+  const hasMinimumActive = activeModelCount >= MIN_ACTIVE_MODELS;
+  const hasCoverage = hasMinimumActive && hasRoundRoleCoverage(activeModels);
+  const canRunRounds = hasCoverage;
   return {
     activeModelCount,
     canRunRounds,
-    runBlockedReason: canRunRounds ? null : "insufficient_active_models",
+    runBlockedReason: canRunRounds
+      ? null
+      : hasMinimumActive
+        ? "insufficient_role_coverage"
+        : "insufficient_active_models",
   };
 }
 
@@ -180,8 +261,21 @@ export async function ensureModelCatalogSeededImpl(ctx: { db: any }): Promise<Mo
     const now = Date.now();
     await Promise.all(
       existing.map(async (row: any) => {
+        const patch: Record<string, unknown> = {};
         if (!Number.isFinite(row.metricsEpoch)) {
-          await ctx.db.patch(row._id, { metricsEpoch: 1, updatedAt: now });
+          patch.metricsEpoch = 1;
+        }
+        if (typeof row.canPrompt !== "boolean") {
+          patch.canPrompt = true;
+        }
+        if (typeof row.canAnswer !== "boolean") {
+          patch.canAnswer = true;
+        }
+        if (typeof row.canVote !== "boolean") {
+          patch.canVote = true;
+        }
+        if (Object.keys(patch).length > 0) {
+          await ctx.db.patch(row._id, { ...patch, updatedAt: now });
         }
       }),
     );
@@ -199,6 +293,9 @@ export async function ensureModelCatalogSeededImpl(ctx: { db: any }): Promise<Mo
       reasoningEffort: model.reasoningEffort,
       metricsEpoch: model.metricsEpoch,
       enabled: model.enabled,
+      canPrompt: model.canPrompt,
+      canAnswer: model.canAnswer,
+      canVote: model.canVote,
       createdAt: now,
       updatedAt: now,
     });
@@ -258,6 +355,9 @@ export const listActiveForRuntime = internalQuery({
       logoId: v.optional(v.string()),
       reasoningEffort: v.optional(reasoningEffortValidator),
       metricsEpoch: v.optional(v.number()),
+      canPrompt: v.optional(v.boolean()),
+      canAnswer: v.optional(v.boolean()),
+      canVote: v.optional(v.boolean()),
     }),
   ),
   handler: async (ctx) => {
@@ -276,6 +376,9 @@ export const createModel = internalMutation({
     logoId: v.string(),
     reasoningEffort: v.optional(reasoningEffortInputValidator),
     enabled: v.optional(v.boolean()),
+    canPrompt: v.optional(v.boolean()),
+    canAnswer: v.optional(v.boolean()),
+    canVote: v.optional(v.boolean()),
   },
   returns: v.any(),
   handler: async (ctx, args) => {
@@ -287,6 +390,9 @@ export const createModel = internalMutation({
       args.reasoningEffort === null
         ? undefined
         : parseModelReasoningEffort(args.reasoningEffort) ?? DEFAULT_MODEL_REASONING_EFFORT;
+    const canPrompt = normalizeModelActionEnabled(args.canPrompt);
+    const canAnswer = normalizeModelActionEnabled(args.canAnswer);
+    const canVote = normalizeModelActionEnabled(args.canVote);
     assertLogoId(logoId);
     if (!isHexColor(color)) {
       throw new Error("Cor invalida. Use formato #RRGGBB.");
@@ -320,6 +426,9 @@ export const createModel = internalMutation({
           ? existingById.metricsEpoch
           : 1,
         enabled: args.enabled ?? true,
+        canPrompt,
+        canAnswer,
+        canVote,
         archivedAt: undefined,
         updatedAt: now,
       });
@@ -335,6 +444,9 @@ export const createModel = internalMutation({
         ...(reasoningEffort ? { reasoningEffort } : {}),
         metricsEpoch: 1,
         enabled: args.enabled ?? true,
+        canPrompt,
+        canAnswer,
+        canVote,
         createdAt: now,
         updatedAt: now,
       });
@@ -442,6 +554,9 @@ export const updateModel = internalMutation({
     logoId: v.string(),
     reasoningEffort: v.optional(reasoningEffortInputValidator),
     enabled: v.boolean(),
+    canPrompt: v.optional(v.boolean()),
+    canAnswer: v.optional(v.boolean()),
+    canVote: v.optional(v.boolean()),
   },
   returns: v.any(),
   handler: async (ctx, args) => {
@@ -473,6 +588,15 @@ export const updateModel = internalMutation({
         : args.reasoningEffort === null
           ? undefined
           : parseModelReasoningEffort(args.reasoningEffort);
+    const existingCanPrompt = normalizeModelActionEnabled(existing.canPrompt);
+    const existingCanAnswer = normalizeModelActionEnabled(existing.canAnswer);
+    const existingCanVote = normalizeModelActionEnabled(existing.canVote);
+    const canPrompt =
+      args.canPrompt === undefined ? existingCanPrompt : normalizeModelActionEnabled(args.canPrompt);
+    const canAnswer =
+      args.canAnswer === undefined ? existingCanAnswer : normalizeModelActionEnabled(args.canAnswer);
+    const canVote =
+      args.canVote === undefined ? existingCanVote : normalizeModelActionEnabled(args.canVote);
 
     const existingById = await ctx.db
       .query("models")
@@ -504,6 +628,9 @@ export const updateModel = internalMutation({
           ? currentEpoch + 1
           : currentEpoch,
       enabled: args.enabled,
+      canPrompt,
+      canAnswer,
+      canVote,
       updatedAt: Date.now(),
     });
 

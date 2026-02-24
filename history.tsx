@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { ConvexProvider, ConvexReactClient, useMutation, usePaginatedQuery, useQuery } from "convex/react";
 import { api } from "./convex/_generated/api";
 import { getLogoUrlById, normalizeHexColor, type ModelCatalogEntry } from "./shared/models";
+import { FRONTEND_VIEWER_HEARTBEAT_MS, VIEWER_ID_STORAGE_KEY } from "./config";
 import "./history.css";
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -70,7 +71,7 @@ function getConvexUrl(): string {
 }
 
 function getOrCreateViewerId(): string {
-  const key = "tokenscomedyclub.viewerId";
+  const key = VIEWER_ID_STORAGE_KEY;
   const existing = window.localStorage.getItem(key);
   if (existing) return existing;
   const generated = crypto.randomUUID();
@@ -323,7 +324,7 @@ function App() {
     void heartbeat({ viewerId, page: "live" });
     const interval = setInterval(() => {
       void heartbeat({ viewerId, page: "live" });
-    }, 10_000);
+    }, FRONTEND_VIEWER_HEARTBEAT_MS);
     return () => clearInterval(interval);
   }, [ensureStarted, heartbeat, ghostViewer]);
 

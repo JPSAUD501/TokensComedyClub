@@ -5,6 +5,7 @@ import {
   isValidModelReasoningEffort,
   parseModelReasoningEffort,
 } from "../shared/models";
+import { FOSSABOT_VALIDATE_TIMEOUT_MS } from "../config";
 const convexInternal = internal as any;
 
 const http = httpRouter();
@@ -87,7 +88,7 @@ async function validateFossabotRequest(request: Request): Promise<boolean> {
 
   try {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 5000);
+    const timer = setTimeout(() => controller.abort(), FOSSABOT_VALIDATE_TIMEOUT_MS);
     const response = await fetch(validateUrl, {
       method: "GET",
       signal: controller.signal,
@@ -307,6 +308,9 @@ http.route({
       logoId?: string;
       reasoningEffort?: string | null;
       enabled?: boolean;
+      canPrompt?: boolean;
+      canAnswer?: boolean;
+      canVote?: boolean;
     };
     if (typeof payload.modelId !== "string" || !payload.modelId.trim()) {
       return text(request, "Invalid modelId", 400);
@@ -328,6 +332,15 @@ http.route({
     ) {
       return text(request, "Invalid reasoningEffort", 400);
     }
+    if (payload.canPrompt !== undefined && typeof payload.canPrompt !== "boolean") {
+      return text(request, "Invalid canPrompt", 400);
+    }
+    if (payload.canAnswer !== undefined && typeof payload.canAnswer !== "boolean") {
+      return text(request, "Invalid canAnswer", 400);
+    }
+    if (payload.canVote !== undefined && typeof payload.canVote !== "boolean") {
+      return text(request, "Invalid canVote", 400);
+    }
 
     try {
       await ctx.runMutation(convexInternal.models.createModel, {
@@ -342,6 +355,9 @@ http.route({
               ? parseModelReasoningEffort(payload.reasoningEffort)
               : undefined,
         enabled: payload.enabled !== false,
+        canPrompt: payload.canPrompt,
+        canAnswer: payload.canAnswer,
+        canVote: payload.canVote,
       });
     } catch (error) {
       return text(request, error instanceof Error ? error.message : "Failed to create model", 400);
@@ -377,6 +393,9 @@ http.route({
       logoId?: string;
       reasoningEffort?: string | null;
       enabled?: boolean;
+      canPrompt?: boolean;
+      canAnswer?: boolean;
+      canVote?: boolean;
     };
 
     if (typeof payload.originalModelId !== "string" || !payload.originalModelId.trim()) {
@@ -405,6 +424,15 @@ http.route({
     if (typeof payload.enabled !== "boolean") {
       return text(request, "Invalid enabled", 400);
     }
+    if (payload.canPrompt !== undefined && typeof payload.canPrompt !== "boolean") {
+      return text(request, "Invalid canPrompt", 400);
+    }
+    if (payload.canAnswer !== undefined && typeof payload.canAnswer !== "boolean") {
+      return text(request, "Invalid canAnswer", 400);
+    }
+    if (payload.canVote !== undefined && typeof payload.canVote !== "boolean") {
+      return text(request, "Invalid canVote", 400);
+    }
 
     try {
       await ctx.runMutation(convexInternal.models.updateModel, {
@@ -420,6 +448,9 @@ http.route({
               ? parseModelReasoningEffort(payload.reasoningEffort)
               : undefined,
         enabled: payload.enabled,
+        canPrompt: payload.canPrompt,
+        canAnswer: payload.canAnswer,
+        canVote: payload.canVote,
       });
     } catch (error) {
       return text(request, error instanceof Error ? error.message : "Failed to update model", 400);

@@ -3,6 +3,7 @@ import { internalMutation, mutation } from "./_generated/server";
 import { internal } from "./_generated/api";
 const convexInternal = internal as any;
 import {
+  VIEWER_PRESENCE_REAPER_MAX_LIMIT,
   VIEWER_VOTE_WINDOW_ACTIVE_MS,
   VIEWER_REAPER_BATCH,
   VIEWER_REAPER_INTERVAL_MS,
@@ -250,7 +251,7 @@ export const reapExpired = internalMutation({
   returns: v.object({ processed: v.number() }),
   handler: async (ctx, args) => {
     const now = Date.now();
-    const limit = Math.max(1, Math.min(args.limit ?? VIEWER_REAPER_BATCH, 1000));
+    const limit = Math.max(1, Math.min(args.limit ?? VIEWER_REAPER_BATCH, VIEWER_PRESENCE_REAPER_MAX_LIMIT));
 
     const expired = await ctx.db
       .query("viewerPresence")

@@ -5,16 +5,22 @@ import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { ALL_PROMPTS } from "../prompts";
 import { parseModelReasoningEffort, type Model } from "../shared/models";
 import {
+  AI_GENERATION_RETRY_DELAYS_MS,
+  AI_MIN_ANSWER_LENGTH,
+  AI_MIN_PROMPT_LENGTH,
+  AI_PROMPT_EXAMPLE_COUNT,
+  AI_REASONING_CALIBRATION_ALPHA_STEADY,
+  AI_REASONING_CALIBRATION_ALPHA_WARMUP,
+  AI_REASONING_CALIBRATION_DEFAULT_FACTOR,
+  AI_REASONING_CALIBRATION_MAX_FACTOR,
+  AI_REASONING_CALIBRATION_MIN_FACTOR,
+  AI_REASONING_CALIBRATION_WARMUP_SAMPLE_COUNT,
+  AI_REASONING_PROGRESS_FLUSH_INTERVAL_MS,
   MODEL_ATTEMPTS,
   MODEL_CALL_TIMEOUT_MS,
+  OPENROUTER_BASE_URL,
   shuffle,
 } from "./constants";
-
-const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
-const GENERATION_RETRY_DELAYS_MS = [400, 800, 1_200, 1_800, 2_500, 3_500, 5_000] as const;
-const DEFAULT_REASONING_CALIBRATION_FACTOR = 0.92;
-const MIN_REASONING_CALIBRATION_FACTOR = 0.45;
-const MAX_REASONING_CALIBRATION_FACTOR = 1.45;
 
 export type DurationSource =
   | "openrouter_latency"
@@ -124,10 +130,10 @@ function pickTokenCount(primary: unknown, fallback: unknown): number {
 }
 
 function clampReasoningCalibrationFactor(value: number): number {
-  if (!Number.isFinite(value)) return DEFAULT_REASONING_CALIBRATION_FACTOR;
+  if (!Number.isFinite(value)) return AI_REASONING_CALIBRATION_DEFAULT_FACTOR;
   return Math.max(
-    MIN_REASONING_CALIBRATION_FACTOR,
-    Math.min(MAX_REASONING_CALIBRATION_FACTOR, value),
+    AI_REASONING_CALIBRATION_MIN_FACTOR,
+    Math.min(AI_REASONING_CALIBRATION_MAX_FACTOR, value),
   );
 }
 
@@ -137,7 +143,7 @@ function getReasoningCalibrationKey(model: Model, callType: ReasoningCallType): 
 }
 
 function getReasoningCalibrationFactor(key: string): number {
-  return reasoningCalibrationByKey.get(key)?.factor ?? DEFAULT_REASONING_CALIBRATION_FACTOR;
+  return reasoningCalibrationByKey.get(key)?.factor ?? AI_REASONING_CALIBRATION_DEFAULT_FACTOR;
 }
 
 function updateReasoningCalibration(
@@ -156,7 +162,10 @@ function updateReasoningCalibration(
     return;
   }
 
-  const alpha = existing.samples < 4 ? 0.2 : 0.1;
+  const alpha =
+    existing.samples < AI_REASONING_CALIBRATION_WARMUP_SAMPLE_COUNT
+      ? AI_REASONING_CALIBRATION_ALPHA_WARMUP
+      : AI_REASONING_CALIBRATION_ALPHA_STEADY;
   const nextFactor = clampReasoningCalibrationFactor(
     existing.factor * (1 - alpha) + observedFactor * alpha,
   );
@@ -303,7 +312,7 @@ async function fetchOpenRouterGeneration(generationId: string): Promise<OpenRout
 
   const url = `${OPENROUTER_BASE_URL}/generation?id=${encodeURIComponent(generationId)}`;
 
-  for (let attempt = 0; attempt < GENERATION_RETRY_DELAYS_MS.length; attempt++) {
+  for (let attempt = 0; attempt < AI_GENERATION_RETRY_DELAYS_MS.length; attempt++) {
     let shouldRetry = false;
     for (const apiKey of apiKeys) {
       try {
@@ -345,7 +354,7 @@ async function fetchOpenRouterGeneration(generationId: string): Promise<OpenRout
     }
 
     if (!shouldRetry) break;
-    await sleep(GENERATION_RETRY_DELAYS_MS[attempt]!);
+    await sleep(AI_GENERATION_RETRY_DELAYS_MS[attempt]!);
   }
 
   return null;
@@ -399,7 +408,7 @@ function toMetrics(
 }
 
 function buildPromptSystem(): string {
-  const examples = shuffle([...ALL_PROMPTS]).slice(0, 80);
+  const examples = shuffle([...ALL_PROMPTS]).slice(0, AI_PROMPT_EXAMPLE_COUNT);
   return `Voce e roteirista de comedia para o jogo Quiplash. Gere um unico prompt engracado de preencher lacuna que os jogadores vao tentar responder. O prompt deve ser surpreendente e pensado para render respostas hilarias. Retorne APENAS o texto do prompt, nada alem disso. Mantenha curto (menos de 15 palavras).\n\nUse uma grande VARIEDADE de formatos de prompt. NAO use sempre "A pior coisa para..." - varie bastante! Aqui vao exemplos da faixa de estilos:\n\n${examples
     .map((p) => `- ${p}`)
     .join("\n")}\n\nCrie algo ORIGINAL - nao copie estes exemplos.`;
@@ -431,7 +440,7 @@ async function generateTextWithReasoningStream(
     const now = Date.now();
     if (!force) {
       if (estimatedReasoningTokens === lastFlushedTokens) return;
-      if (now - lastFlushedAt < 1_000) return;
+      if (now - lastFlushedAt < AI_REASONING_PROGRESS_FLUSH_INTERVAL_MS) return;
     } else if (
       estimatedReasoningTokens === lastFlushedTokens &&
       finalized === lastFlushedFinalized
@@ -532,7 +541,7 @@ export async function callGeneratePrompt(
     onReasoningProgress,
   );
 
-  if (result.text.trim().length < 10) {
+  if (result.text.trim().length < AI_MIN_PROMPT_LENGTH) {
     throw new Error("Prompt generation returned an invalid text.");
   }
 
@@ -552,7 +561,7 @@ export async function callGenerateAnswer(
     onReasoningProgress,
   );
 
-  if (result.text.trim().length < 3) {
+  if (result.text.trim().length < AI_MIN_ANSWER_LENGTH) {
     throw new Error("Answer generation returned an invalid text.");
   }
 

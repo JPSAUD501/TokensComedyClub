@@ -79,7 +79,7 @@ export type AdminSnapshot = {
   viewerCount: number;
   activeModelCount: number;
   canRunRounds: boolean;
-  runBlockedReason: "insufficient_active_models" | null;
+  runBlockedReason: "insufficient_active_models" | "insufficient_role_coverage" | null;
   enabledModelIds: string[];
 };
 

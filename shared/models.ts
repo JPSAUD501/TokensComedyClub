@@ -58,6 +58,9 @@ export type Model = {
   logoId?: ModelLogoId;
   reasoningEffort?: ModelReasoningEffort;
   metricsEpoch?: number;
+  canPrompt?: boolean;
+  canAnswer?: boolean;
+  canVote?: boolean;
 };
 
 export type ModelCatalogEntry = {
@@ -69,6 +72,9 @@ export type ModelCatalogEntry = {
   reasoningEffort?: ModelReasoningEffort;
   metricsEpoch: number;
   enabled: boolean;
+  canPrompt: boolean;
+  canAnswer: boolean;
+  canVote: boolean;
   archivedAt?: number;
   createdAt?: number;
   updatedAt?: number;
@@ -76,6 +82,7 @@ export type ModelCatalogEntry = {
 
 export const DEFAULT_MODEL_COLOR = "#A1A1A1";
 export const DEFAULT_MODEL_REASONING_EFFORT: ModelReasoningEffort = "medium";
+export const DEFAULT_MODEL_ACTION_ENABLED = true;
 
 const LOGO_ID_SET = new Set<string>(AVAILABLE_MODEL_LOGO_IDS);
 const REASONING_EFFORT_SET = new Set<string>(AVAILABLE_REASONING_EFFORTS);
@@ -99,6 +106,10 @@ export function normalizeModelReasoningEffort(input?: string | null): ModelReaso
   return DEFAULT_MODEL_REASONING_EFFORT;
 }
 
+export function normalizeModelActionEnabled(input?: boolean | null): boolean {
+  return input !== false;
+}
+
 export function parseModelReasoningEffort(
   input?: string | null,
 ): ModelReasoningEffort | undefined {
@@ -120,7 +131,15 @@ export function normalizeHexColor(input?: string | null): string {
 export function toRuntimeModel(
   entry: Pick<
     ModelCatalogEntry,
-    "modelId" | "name" | "color" | "logoId" | "reasoningEffort" | "metricsEpoch"
+    | "modelId"
+    | "name"
+    | "color"
+    | "logoId"
+    | "reasoningEffort"
+    | "metricsEpoch"
+    | "canPrompt"
+    | "canAnswer"
+    | "canVote"
   >,
 ): Model {
   return {
@@ -130,5 +149,8 @@ export function toRuntimeModel(
     logoId: entry.logoId,
     reasoningEffort: parseModelReasoningEffort(entry.reasoningEffort),
     metricsEpoch: Number.isFinite(entry.metricsEpoch) ? entry.metricsEpoch : 1,
+    canPrompt: normalizeModelActionEnabled(entry.canPrompt),
+    canAnswer: normalizeModelActionEnabled(entry.canAnswer),
+    canVote: normalizeModelActionEnabled(entry.canVote),
   };
 }

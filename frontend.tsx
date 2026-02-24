@@ -12,6 +12,16 @@ import {
   ReasoningProgressEstimator,
   reasoningProgressKey,
 } from "./shared/reasoningEstimator";
+import {
+  FRONTEND_ACTIVE_TICK_MS,
+  FRONTEND_IDLE_TICK_MS,
+  FRONTEND_VIEWER_HEARTBEAT_MS,
+  REASONING_ESTIMATOR_MAX_EXTRAPOLATION_MS,
+  REASONING_ESTIMATOR_MAX_RATE_PER_MS,
+  REASONING_ESTIMATOR_PRUNE_OLDER_THAN_MS,
+  REASONING_ESTIMATOR_SYNC_BLEND_MS,
+  VIEWER_ID_STORAGE_KEY,
+} from "./config";
 import type {
   ActiveReasoningProgressItem,
   GameState,
@@ -61,7 +71,7 @@ function getConvexUrl(): string {
 }
 
 function getOrCreateViewerId(): string {
-  const key = "tokenscomedyclub.viewerId";
+  const key = VIEWER_ID_STORAGE_KEY;
   const existing = window.localStorage.getItem(key);
   if (existing) return existing;
   const generated = crypto.randomUUID();
@@ -71,7 +81,7 @@ function getOrCreateViewerId(): string {
 
 function getEnabledModelNames(models: ModelCatalogEntry[]): string[] {
   return models
-    .filter((model) => model.enabled && !model.archivedAt)
+    .filter((model) => model.enabled && !model.archivedAt && model.canAnswer !== false)
     .map((model) => model.name);
 }
 
@@ -233,10 +243,12 @@ function PromptCard({
   nowMs: number;
 }) {
   const promptMetricsText = buildFinishedTaskMetricsText(round.promptTask, nowMs, liveReasoningTokens);
+  const promptColor = getColor(round.prompter.name, round.prompter.color);
+  const promptStyle = { "--accent": promptColor } as React.CSSProperties;
 
   if (round.phase === "prompting" && !round.prompt) {
     return (
-      <div className="prompt">
+      <div className="prompt" style={promptStyle}>
         <div className="prompt__by">
           <ModelTag model={round.prompter} small /> esta escrevendo um prompt
           <Dots />
@@ -253,7 +265,7 @@ function PromptCard({
 
   if (round.promptTask.error) {
     return (
-      <div className="prompt">
+      <div className="prompt" style={promptStyle}>
         <div className="prompt__text prompt__text--error">
           Falha ao gerar prompt
         </div>
@@ -262,7 +274,7 @@ function PromptCard({
   }
 
   return (
-    <div className="prompt">
+    <div className="prompt" style={promptStyle}>
       <div className="prompt__by">
         Prompt de <ModelTag model={round.prompter} small />
       </div>
@@ -722,9 +734,9 @@ function App() {
   const countdownTrackerRef = React.useRef(createVotingCountdownTracker());
   const reasoningEstimatorRef = React.useRef(
     new ReasoningProgressEstimator({
-      syncBlendMs: 260,
-      maxExtrapolationMs: 900,
-      maxRatePerMs: 2.5,
+      syncBlendMs: REASONING_ESTIMATOR_SYNC_BLEND_MS,
+      maxExtrapolationMs: REASONING_ESTIMATOR_MAX_EXTRAPOLATION_MS,
+      maxRatePerMs: REASONING_ESTIMATOR_MAX_RATE_PER_MS,
     }),
   );
   const ghostViewer = React.useMemo(() => isGhostViewer(), []);
@@ -770,11 +782,11 @@ function App() {
         now,
       );
     }
-    estimator.pruneOlderThan(3 * 60_000, now);
+    estimator.pruneOlderThan(REASONING_ESTIMATOR_PRUNE_OLDER_THAN_MS, now);
   }, [liveReasoning]);
 
   useEffect(() => {
-    const intervalMs = isGeneratingActive ? 50 : 1_000;
+    const intervalMs = isGeneratingActive ? FRONTEND_ACTIVE_TICK_MS : FRONTEND_IDLE_TICK_MS;
     const interval = setInterval(() => {
       setNowMs(Date.now());
     }, intervalMs);
@@ -793,7 +805,7 @@ function App() {
     void heartbeat({ viewerId, page: "live" });
     const interval = setInterval(() => {
       void heartbeat({ viewerId, page: "live" });
-    }, 10_000);
+    }, FRONTEND_VIEWER_HEARTBEAT_MS);
     return () => {
       clearInterval(interval);
     };

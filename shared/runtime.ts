@@ -1,4 +1,10 @@
-const FALLBACK_VIEWER_ID_KEY = "tokenscomedyclub.viewerId";
+import {
+  ADMIN_PASSCODE_STORAGE_KEY,
+  VIEWER_ID_STORAGE_KEY,
+  VIEWER_SHARD_COUNT,
+} from "../config";
+
+const FALLBACK_VIEWER_ID_KEY = VIEWER_ID_STORAGE_KEY;
 
 export function getConvexUrl(): string {
   const value = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env?.VITE_CONVEX_URL;
@@ -9,7 +15,7 @@ export function getConvexUrl(): string {
 }
 
 export function getAdminPasscodeStorageKey(): string {
-  return "tokenscomedyclub.adminPasscode";
+  return ADMIN_PASSCODE_STORAGE_KEY;
 }
 
 export function getOrCreateViewerId(key = FALLBACK_VIEWER_ID_KEY): string {
@@ -20,7 +26,7 @@ export function getOrCreateViewerId(key = FALLBACK_VIEWER_ID_KEY): string {
   return generated;
 }
 
-export function hashToShard(input: string, shards = 64): number {
+export function hashToShard(input: string, shards = VIEWER_SHARD_COUNT): number {
   let hash = 0;
   for (let i = 0; i < input.length; i++) {
     hash = (hash * 31 + input.charCodeAt(i)) | 0;

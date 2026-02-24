@@ -6,28 +6,79 @@ import { internal } from "./_generated/api";
 const convexInternal = internal as any;
 import type { Model } from "../shared/models";
 import {
+  ENGINE_RUNNER_MIN_ENABLED_MODELS,
+  ENGINE_RUNNER_RETRY_ACTIVE_ROUND_PENDING_MS,
+  ENGINE_RUNNER_RETRY_ACTIVE_ROUND_RECOVERED_MS,
+  ENGINE_RUNNER_RETRY_BLOCKED_MS,
+  ENGINE_RUNNER_RETRY_CREATE_ROUND_FAILED_MS,
+  ENGINE_RUNNER_RETRY_PAUSED_MS,
+  ENGINE_RUNNER_VOTE_MODEL_WAIT_MS,
+  ENGINE_RUNNER_VOTE_WINDOW_POLL_MAX_MS,
+  ENGINE_RUNNER_VOTE_WINDOW_POLL_MIN_MS,
+  MODEL_CALL_TIMEOUT_MS,
+  MODEL_ATTEMPTS,
   POST_ROUND_DELAY_MS,
   RUNNER_LEASE_HEARTBEAT_MS,
+  RUNNER_LEASE_MANUAL_RENEW_MS,
   SKIPPED_ROUND_DELAY_MS,
   sleep,
   shuffle,
 } from "./constants";
 import { callGenerateAnswer, callGeneratePrompt, callVote, type LlmCallMetrics } from "./ai";
 
-function pickRoundModels(models: Model[]): {
+type RoleCapableModel = Model & {
+  canPrompt?: boolean;
+  canAnswer?: boolean;
+  canVote?: boolean;
+};
+
+function toRoundModel(model: RoleCapableModel): Model {
+  return {
+    id: model.id,
+    name: model.name,
+    color: model.color,
+    logoId: model.logoId,
+    reasoningEffort: model.reasoningEffort,
+    metricsEpoch: model.metricsEpoch,
+  };
+}
+
+function pickRoundModels(models: RoleCapableModel[]): {
   prompter: Model;
   contestants: [Model, Model];
   voters: Model[];
-} {
-  const shuffled = shuffle([...models]);
-  const prompter = shuffled[0]!;
-  const contA = shuffled[1]!;
-  const contB = shuffled[2]!;
-  return {
-    prompter,
-    contestants: [contA, contB],
-    voters: [prompter, ...shuffled.slice(3)],
-  };
+} | null {
+  const promptPool = shuffle(models.filter((model) => model.canPrompt !== false));
+  const answerPool = models.filter((model) => model.canAnswer !== false);
+  const votePool = models.filter((model) => model.canVote !== false);
+
+  if (promptPool.length === 0 || answerPool.length < 2 || votePool.length === 0) {
+    return null;
+  }
+
+  for (const prompter of promptPool) {
+    const contestantCandidates = shuffle(answerPool.filter((candidate) => candidate.id !== prompter.id));
+    if (contestantCandidates.length < 2) continue;
+
+    for (let i = 0; i < contestantCandidates.length - 1; i += 1) {
+      const contA = contestantCandidates[i]!;
+      for (let j = i + 1; j < contestantCandidates.length; j += 1) {
+        const contB = contestantCandidates[j]!;
+        const voters = shuffle(
+          votePool.filter((voter) => voter.id !== contA.id && voter.id !== contB.id),
+        );
+        if (voters.length === 0) continue;
+
+        return {
+          prompter: toRoundModel(prompter),
+          contestants: [toRoundModel(contA), toRoundModel(contB)],
+          voters: voters.map((voter) => toRoundModel(voter)),
+        };
+      }
+    }
+  }
+
+  return null;
 }
 
 async function leaseStillValid(ctx: any, leaseId: string, generation: number): Promise<boolean> {
@@ -123,7 +174,9 @@ export const runLoop = internalAction({
     await ctx.runMutation(convexInternal.engine.renewLease, { leaseId: args.leaseId });
 
     if (state.isPaused) {
-      await ctx.scheduler.runAfter(1_000, convexInternal.engineRunner.runLoop, { leaseId: args.leaseId });
+      await ctx.scheduler.runAfter(ENGINE_RUNNER_RETRY_PAUSED_MS, convexInternal.engineRunner.runLoop, {
+        leaseId: args.leaseId,
+      });
       return null;
     }
 
@@ -133,9 +186,13 @@ export const runLoop = internalAction({
         expectedGeneration,
       });
       if (recovery.recovered) {
-        await ctx.scheduler.runAfter(0, convexInternal.engineRunner.runLoop, { leaseId: args.leaseId });
+        await ctx.scheduler.runAfter(ENGINE_RUNNER_RETRY_ACTIVE_ROUND_RECOVERED_MS, convexInternal.engineRunner.runLoop, {
+          leaseId: args.leaseId,
+        });
       } else {
-        await ctx.scheduler.runAfter(750, convexInternal.engineRunner.runLoop, { leaseId: args.leaseId });
+        await ctx.scheduler.runAfter(ENGINE_RUNNER_RETRY_ACTIVE_ROUND_PENDING_MS, convexInternal.engineRunner.runLoop, {
+          leaseId: args.leaseId,
+        });
       }
       return null;
     }
@@ -143,13 +200,22 @@ export const runLoop = internalAction({
     const enabledModels = (await ctx.runQuery(
       convexInternal.models.listActiveForRuntime,
       {},
-    )) as Model[];
-    if (enabledModels.length < 3) {
-      await ctx.scheduler.runAfter(1_000, convexInternal.engineRunner.runLoop, { leaseId: args.leaseId });
+    )) as RoleCapableModel[];
+    if (enabledModels.length < ENGINE_RUNNER_MIN_ENABLED_MODELS) {
+      await ctx.scheduler.runAfter(ENGINE_RUNNER_RETRY_BLOCKED_MS, convexInternal.engineRunner.runLoop, {
+        leaseId: args.leaseId,
+      });
       return null;
     }
 
-    const { prompter, contestants, voters } = pickRoundModels(enabledModels);
+    const selectedModels = pickRoundModels(enabledModels);
+    if (!selectedModels) {
+      await ctx.scheduler.runAfter(ENGINE_RUNNER_RETRY_BLOCKED_MS, convexInternal.engineRunner.runLoop, {
+        leaseId: args.leaseId,
+      });
+      return null;
+    }
+    const { prompter, contestants, voters } = selectedModels;
 
     const created = await ctx.runMutation(convexInternal.engine.createRound, {
       expectedGeneration,
@@ -158,7 +224,9 @@ export const runLoop = internalAction({
     });
 
     if (!created) {
-      await ctx.scheduler.runAfter(300, convexInternal.engineRunner.runLoop, { leaseId: args.leaseId });
+      await ctx.scheduler.runAfter(ENGINE_RUNNER_RETRY_CREATE_ROUND_FAILED_MS, convexInternal.engineRunner.runLoop, {
+        leaseId: args.leaseId,
+      });
       return null;
     }
 
@@ -219,7 +287,7 @@ export const runLoop = internalAction({
       await ctx.runMutation(convexInternal.engine.setPromptError, {
         expectedGeneration,
         roundId,
-        error: "Falha ao gerar prompt (3 tentativas)",
+        error: `Falha ao gerar prompt (${MODEL_ATTEMPTS} tentativas)`,
       });
 
       await sleep(SKIPPED_ROUND_DELAY_MS);
@@ -296,7 +364,7 @@ export const runLoop = internalAction({
           } catch (error) {
             const message =
               error instanceof Error && /timeout|timed out|abort/i.test(error.message)
-                ? "Tempo esgotado (60s)"
+                ? `Tempo esgotado (${Math.round(MODEL_CALL_TIMEOUT_MS / 1000)}s)`
                 : "Failed to answer";
             if (!(await leaseStillValid(ctx, args.leaseId, expectedGeneration))) return;
 
@@ -409,33 +477,54 @@ export const runLoop = internalAction({
 
     let windowClosed = false;
     let lastLeaseRenewAt = Date.now();
-    while (!windowClosed || !modelVotesDone) {
+    while (!windowClosed) {
       if (!(await leaseStillValid(ctx, args.leaseId, expectedGeneration))) return null;
 
       const latestRound = await ctx.runQuery(convexInternal.engine.getRoundForRunner, { roundId });
       if (!latestRound || latestRound.phase !== "voting" || !latestRound.viewerVotingEndsAt) {
         windowClosed = true;
         if (!modelVotesDone) {
-          await sleep(300);
+          await sleep(ENGINE_RUNNER_VOTE_MODEL_WAIT_MS);
         }
       } else {
         const remaining = latestRound.viewerVotingEndsAt - Date.now();
         windowClosed = remaining <= 0;
         if (!windowClosed) {
-          await sleep(Math.max(100, Math.min(1_000, remaining)));
+          await sleep(
+            Math.max(
+              ENGINE_RUNNER_VOTE_WINDOW_POLL_MIN_MS,
+              Math.min(ENGINE_RUNNER_VOTE_WINDOW_POLL_MAX_MS, remaining),
+            ),
+          );
         } else if (!modelVotesDone) {
-          await sleep(300);
+          await sleep(ENGINE_RUNNER_VOTE_MODEL_WAIT_MS);
         }
       }
 
       const now = Date.now();
-      if (now - lastLeaseRenewAt >= 20_000) {
+      if (now - lastLeaseRenewAt >= RUNNER_LEASE_MANUAL_RENEW_MS) {
         await ctx.runMutation(convexInternal.engine.renewLease, { leaseId: args.leaseId });
         lastLeaseRenewAt = now;
       }
     }
 
-    await modelVotesPromise;
+    let modelVotesFailed = false;
+    if (modelVotesDone) {
+      try {
+        await modelVotesPromise;
+      } catch {
+        modelVotesFailed = true;
+      }
+    } else {
+      modelVotesFailed = true;
+      void modelVotesPromise.catch(() => {});
+    }
+
+    if (modelVotesFailed) {
+      await ctx.runMutation(convexInternal.engine.recoverStaleActiveRound, {
+        expectedGeneration,
+      });
+    }
 
     if (!(await leaseStillValid(ctx, args.leaseId, expectedGeneration))) return null;
 

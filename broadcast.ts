@@ -10,6 +10,17 @@ import {
   ReasoningProgressEstimator,
   reasoningProgressKey,
 } from "./shared/reasoningEstimator";
+import {
+  BROADCAST_CAPTURE_DEFAULT_BITRATE,
+  BROADCAST_CAPTURE_DEFAULT_FPS,
+  BROADCAST_CAPTURE_MAX_QUEUED_BYTES,
+  BROADCAST_CAPTURE_TIMESLICE_MS,
+  BROADCAST_LOCAL_REASONING_TICK_MS,
+  REASONING_ESTIMATOR_MAX_EXTRAPOLATION_MS,
+  REASONING_ESTIMATOR_MAX_RATE_PER_MS,
+  REASONING_ESTIMATOR_PRUNE_OLDER_THAN_MS,
+  REASONING_ESTIMATOR_SYNC_BLEND_MS,
+} from "./config";
 import type { ActiveReasoningProgressItem, TaskMetrics } from "./shared/types";
 
 type Model = { id: string; name: string; color?: string; logoId?: string };
@@ -86,7 +97,7 @@ const ROUND_STATUS_BOX_W = 300;
 const ROUND_STATUS_BOX_Y = 150;
 const ROUND_STATUS_BOX_RIGHT_PADDING = 64;
 const ROUND_STATUS_PROMPT_RESERVE = 0;
-const LOCAL_REASONING_TICK_MS = 50;
+const LOCAL_REASONING_TICK_MS = BROADCAST_LOCAL_REASONING_TICK_MS;
 
 const canvas = document.getElementById("broadcast-canvas") as HTMLCanvasElement;
 const statusEl = document.getElementById("broadcast-status") as HTMLDivElement;
@@ -108,9 +119,9 @@ const convex = new ConvexClient(getConvexUrl());
 const convexApi = api as any;
 const countdownTracker = createVotingCountdownTracker();
 const reasoningEstimator = new ReasoningProgressEstimator({
-  syncBlendMs: 260,
-  maxExtrapolationMs: 900,
-  maxRatePerMs: 2.5,
+  syncBlendMs: REASONING_ESTIMATOR_SYNC_BLEND_MS,
+  maxExtrapolationMs: REASONING_ESTIMATOR_MAX_EXTRAPOLATION_MS,
+  maxRatePerMs: REASONING_ESTIMATOR_MAX_RATE_PER_MS,
 });
 let liveUnsubscribe: { unsubscribe: () => void } | null = null;
 let reasoningUnsubscribe: { unsubscribe: () => void } | null = null;
@@ -165,7 +176,7 @@ function getConvexUrl(): string {
 
 function getEnabledModelNames(models: ModelCatalogEntry[]): string[] {
   return models
-    .filter((model) => model.enabled && !model.archivedAt)
+    .filter((model) => model.enabled && !model.archivedAt && model.canAnswer !== false)
     .map((model) => model.name);
 }
 
@@ -253,7 +264,7 @@ function setupRealtime() {
           now,
         );
       }
-      reasoningEstimator.pruneOlderThan(3 * 60_000, now);
+      reasoningEstimator.pruneOlderThan(REASONING_ESTIMATOR_PRUNE_OLDER_THAN_MS, now);
     },
     () => {
       // Ignore transient disconnects; estimator resumes on next payload.
@@ -1067,9 +1078,11 @@ function startCanvasCaptureSink() {
     return;
   }
 
-  const fps = Number.parseInt(params.get("captureFps") ?? "30", 10);
-  const bitRate = Number.parseInt(params.get("captureBitrate") ?? "12000000", 10);
-  const stream = canvas.captureStream(Number.isFinite(fps) && fps > 0 ? fps : 30);
+  const fps = Number.parseInt(params.get("captureFps") ?? String(BROADCAST_CAPTURE_DEFAULT_FPS), 10);
+  const bitRate = Number.parseInt(params.get("captureBitrate") ?? String(BROADCAST_CAPTURE_DEFAULT_BITRATE), 10);
+  const stream = canvas.captureStream(
+    Number.isFinite(fps) && fps > 0 ? fps : BROADCAST_CAPTURE_DEFAULT_FPS,
+  );
   const sinkUrl = sink;
 
   let recorder: MediaRecorder | null = null;
@@ -1084,14 +1097,14 @@ function startCanvasCaptureSink() {
     mimeCandidates.find((value) => MediaRecorder.isTypeSupported(value)) ?? "";
 
   const options: MediaRecorderOptions = {
-    videoBitsPerSecond: Number.isFinite(bitRate) && bitRate > 0 ? bitRate : 12_000_000,
+    videoBitsPerSecond: Number.isFinite(bitRate) && bitRate > 0 ? bitRate : BROADCAST_CAPTURE_DEFAULT_BITRATE,
   };
   if (mimeType) options.mimeType = mimeType;
 
   recorder = new MediaRecorder(stream, options);
   recorder.ondataavailable = async (event) => {
     if (event.data.size === 0) return;
-    if (queuedBytes > 16_000_000) return;
+    if (queuedBytes > BROADCAST_CAPTURE_MAX_QUEUED_BYTES) return;
     const chunk = await event.data.arrayBuffer();
     queuedBytes += chunk.byteLength;
     pendingSend = pendingSend
@@ -1116,7 +1129,7 @@ function startCanvasCaptureSink() {
   recorder.onerror = () => {
     setStatus("Erro no gravador");
   };
-  recorder.start(250);
+  recorder.start(BROADCAST_CAPTURE_TIMESLICE_MS);
   setStatus(`captura->http ${fps}fps`);
 }
 

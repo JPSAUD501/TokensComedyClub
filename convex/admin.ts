@@ -2,7 +2,12 @@ import { v } from "convex/values";
 import { internalMutation, internalQuery } from "./_generated/server";
 import { internal } from "./_generated/api";
 const convexInternal = internal as any;
-import { DEFAULT_SCORES, PLATFORM_VIEWER_POLL_INTERVAL_MS } from "./constants";
+import {
+  DEFAULT_SCORES,
+  PLATFORM_VIEWER_POLL_INTERVAL_MS,
+  ROUND_PURGE_BATCH_SIZE,
+  RUNNER_LEASE_MS,
+} from "./constants";
 import {
   getEngineState,
   getOrCreateEngineState,
@@ -47,7 +52,11 @@ export const getSnapshot = internalMutation({
     viewerCount: v.number(),
     activeModelCount: v.number(),
     canRunRounds: v.boolean(),
-    runBlockedReason: v.union(v.literal("insufficient_active_models"), v.null()),
+    runBlockedReason: v.union(
+      v.literal("insufficient_active_models"),
+      v.literal("insufficient_role_coverage"),
+      v.null(),
+    ),
     enabledModelIds: v.array(v.string()),
   }),
   handler: async (ctx) => {
@@ -223,7 +232,7 @@ export const resume = internalMutation({
       const leaseId = crypto.randomUUID();
       await ctx.db.patch(state._id, {
         runnerLeaseId: leaseId,
-        runnerLeaseUntil: now + 60_000,
+        runnerLeaseUntil: now + RUNNER_LEASE_MS,
         updatedAt: now,
       });
       await ctx.scheduler.runAfter(0, convexInternal.engineRunner.runLoop, { leaseId });
@@ -282,27 +291,27 @@ export const reset = internalMutation({
     await ctx.scheduler.runAfter(0, convexInternal.admin.purgeGenerationRoundBatch, {
       generation: oldGeneration,
       cursor: undefined,
-      numItems: 500,
+      numItems: ROUND_PURGE_BATCH_SIZE,
     });
     await ctx.scheduler.runAfter(0, convexInternal.admin.purgeGenerationViewerVoteBatch, {
       generation: oldGeneration,
       cursor: undefined,
-      numItems: 500,
+      numItems: ROUND_PURGE_BATCH_SIZE,
     });
     await ctx.scheduler.runAfter(0, convexInternal.admin.purgeGenerationTalliesBatch, {
       generation: oldGeneration,
       cursor: undefined,
-      numItems: 500,
+      numItems: ROUND_PURGE_BATCH_SIZE,
     });
     await ctx.scheduler.runAfter(0, convexInternal.admin.purgeGenerationUsageEventBatch, {
       generation: oldGeneration,
       cursor: undefined,
-      numItems: 500,
+      numItems: ROUND_PURGE_BATCH_SIZE,
     });
     await ctx.scheduler.runAfter(0, convexInternal.admin.purgeGenerationReasoningProgressBatch, {
       generation: oldGeneration,
       cursor: undefined,
-      numItems: 500,
+      numItems: ROUND_PURGE_BATCH_SIZE,
     });
 
     return { generation: nextGeneration };

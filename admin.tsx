@@ -21,7 +21,7 @@ type AdminSnapshot = {
   viewerCount: number;
   activeModelCount: number;
   canRunRounds: boolean;
-  runBlockedReason: "insufficient_active_models" | null;
+  runBlockedReason: "insufficient_active_models" | "insufficient_role_coverage" | null;
   enabledModelIds: string[];
 };
 
@@ -69,11 +69,82 @@ type ModelsResponse = {
   activeModelsHourlyShareByModel?: Record<string, number>;
 } & Partial<AdminSnapshot>;
 type Mode = "checking" | "locked" | "ready";
+type AdminPage = "operations" | "models" | "targets" | "projections";
 type ModelReasoningEffortFormValue = ModelReasoningEffort | typeof REASONING_EFFORT_UNDEFINED;
+type ActionRatios = {
+  prompt: number;
+  answer: number;
+  vote: number;
+};
+type ModelStatusFilter = "all" | "active" | "inactive" | "archived";
+type ModelRoleFilter = "all" | "prompt" | "answer" | "vote";
+type ModelSort = "name" | "cost_desc" | "cost_asc" | "recent";
 
 const RESET_TOKEN = "RESET";
 const ADMIN_PASSCODE_KEY = "tokenscomedyclub.adminPasscode";
 const DEFAULT_REASONING_LABEL = "padrão";
+const DEFAULT_ADMIN_PAGE: AdminPage = "operations";
+const ADMIN_PAGE_TABS: Array<{ id: AdminPage; label: string; description: string }> = [
+  { id: "operations", label: "Operacao", description: "Controle do motor e status da rodada." },
+  { id: "models", label: "Modelos", description: "Catalogo, papeis e configuracao dos modelos." },
+  { id: "targets", label: "Audiencia", description: "Targets de Twitch/YouTube e polling." },
+  { id: "projections", label: "Projecoes", description: "Custos, participacao e simulacao de preco." },
+];
+
+function parseAdminPage(value: string | null): AdminPage {
+  if (value === "operations" || value === "models" || value === "targets" || value === "projections") {
+    return value;
+  }
+  return DEFAULT_ADMIN_PAGE;
+}
+
+function readAdminPageFromLocation(): AdminPage {
+  const params = new URLSearchParams(window.location.search);
+  return parseAdminPage(params.get("page"));
+}
+
+function writeAdminPageToLocation(page: AdminPage) {
+  const url = new URL(window.location.href);
+  url.searchParams.set("page", page);
+  window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+}
+
+function safePositive(value: unknown): number {
+  return Number.isFinite(value) ? Math.max(0, Number(value)) : 0;
+}
+
+function actionWeight(summary?: UsageSummary): number {
+  if (!summary) return 0;
+  return safePositive(summary.avgCostUsd) * safePositive(summary.sampleSize);
+}
+
+function getActionRatios(usage: ModelUsageRow | undefined, model: ModelCatalogEntry | undefined): ActionRatios {
+  const promptWeight = actionWeight(usage?.prompt);
+  const answerWeight = actionWeight(usage?.answer);
+  const voteWeight = actionWeight(usage?.vote);
+  const totalWeight = promptWeight + answerWeight + voteWeight;
+
+  if (totalWeight > 0) {
+    return {
+      prompt: (promptWeight / totalWeight) * 100,
+      answer: (answerWeight / totalWeight) * 100,
+      vote: (voteWeight / totalWeight) * 100,
+    };
+  }
+
+  const fallbackKeys: Array<keyof ActionRatios> = [];
+  if (model?.canPrompt !== false) fallbackKeys.push("prompt");
+  if (model?.canAnswer !== false) fallbackKeys.push("answer");
+  if (model?.canVote !== false) fallbackKeys.push("vote");
+  if (fallbackKeys.length === 0) fallbackKeys.push("prompt", "answer", "vote");
+  const shared = 100 / fallbackKeys.length;
+
+  return {
+    prompt: fallbackKeys.includes("prompt") ? shared : 0,
+    answer: fallbackKeys.includes("answer") ? shared : 0,
+    vote: fallbackKeys.includes("vote") ? shared : 0,
+  };
+}
 
 function getConvexSiteUrl(): string {
   const env = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env;
@@ -99,9 +170,12 @@ function formatLastPolled(lastPolledAt?: number): string {
   return new Date(lastPolledAt).toLocaleTimeString("pt-BR");
 }
 
-function formatArchivedAt(archivedAt?: number): string {
-  if (!archivedAt) return "ativo";
-  return `arquivado em ${new Date(archivedAt).toLocaleString("pt-BR")}`;
+function modelMatchesRole(model: ModelCatalogEntry, filter: ModelRoleFilter): boolean {
+  if (filter === "all") return true;
+  if (filter === "prompt") return model.canPrompt;
+  if (filter === "answer") return model.canAnswer;
+  if (filter === "vote") return model.canVote;
+  return true;
 }
 
 function formatUsd(value: number | null): string {
@@ -200,9 +274,20 @@ function App() {
     DEFAULT_MODEL_REASONING_EFFORT,
   );
   const [modelEnabled, setModelEnabled] = useState(true);
+  const [modelCanPrompt, setModelCanPrompt] = useState(true);
+  const [modelCanAnswer, setModelCanAnswer] = useState(true);
+  const [modelCanVote, setModelCanVote] = useState(true);
   const [editingModelOriginalId, setEditingModelOriginalId] = useState<string | null>(null);
   const [isModelFormOpen, setIsModelFormOpen] = useState(false);
-  const [showArchivedModels, setShowArchivedModels] = useState(false);
+  const [modelSearch, setModelSearch] = useState("");
+  const [modelStatusFilter, setModelStatusFilter] = useState<ModelStatusFilter>("all");
+  const [modelRoleFilter, setModelRoleFilter] = useState<ModelRoleFilter>("all");
+  const [modelSort, setModelSort] = useState<ModelSort>("cost_desc");
+  const [activePage, setActivePage] = useState<AdminPage>(() => readAdminPageFromLocation());
+  const [calcHoursPerDayInput, setCalcHoursPerDayInput] = useState("8");
+  const [calcDaysPerWeekInput, setCalcDaysPerWeekInput] = useState("5");
+  const [calcDaysPerMonthInput, setCalcDaysPerMonthInput] = useState("22");
+  const [calcMonthlyBudgetInput, setCalcMonthlyBudgetInput] = useState("500");
 
   async function loadViewerTargets(passcodeToUse: string) {
     const response = await requestAdminJson<ViewerTargetsResponse>(
@@ -261,15 +346,58 @@ function App() {
       });
   }, []);
 
+  useEffect(() => {
+    writeAdminPageToLocation(activePage);
+  }, [activePage]);
+
   const busy = useMemo(() => pending !== null, [pending]);
   const activeModels = useMemo(
     () => models.filter((model) => model.enabled && !model.archivedAt),
     [models],
   );
-  const visibleModels = useMemo(
-    () => (showArchivedModels ? models : models.filter((model) => !model.archivedAt)),
-    [models, showArchivedModels],
-  );
+  const modelStats = useMemo(() => {
+    const active = models.filter((model) => model.enabled && !model.archivedAt).length;
+    const inactive = models.filter((model) => !model.enabled && !model.archivedAt).length;
+    const archived = models.filter((model) => Boolean(model.archivedAt)).length;
+    const answerReady = models.filter((model) => model.canAnswer && !model.archivedAt).length;
+    return {
+      total: models.length,
+      active,
+      inactive,
+      archived,
+      answerReady,
+    };
+  }, [models]);
+  const filteredModels = useMemo(() => {
+    const search = modelSearch.trim().toLowerCase();
+    const filtered = models
+      .filter((model) => {
+        if (modelStatusFilter === "active") return model.enabled && !model.archivedAt;
+        if (modelStatusFilter === "inactive") return !model.enabled && !model.archivedAt;
+        if (modelStatusFilter === "archived") return Boolean(model.archivedAt);
+        return true;
+      })
+      .filter((model) => modelMatchesRole(model, modelRoleFilter))
+      .filter((model) => {
+        if (!search) return true;
+        return model.name.toLowerCase().includes(search) || model.modelId.toLowerCase().includes(search);
+      });
+
+    return filtered.sort((a, b) => {
+      if (modelSort === "name") {
+        return a.name.localeCompare(b.name, "pt-BR");
+      }
+      if (modelSort === "recent") {
+        const aUpdated = Number(a.updatedAt ?? a.createdAt ?? 0);
+        const bUpdated = Number(b.updatedAt ?? b.createdAt ?? 0);
+        return bUpdated - aUpdated;
+      }
+      const aHourly = Number(usageHourlyByModel[a.modelId]?.avgCostPerHourUsd ?? 0);
+      const bHourly = Number(usageHourlyByModel[b.modelId]?.avgCostPerHourUsd ?? 0);
+      if (modelSort === "cost_asc") return aHourly - bHourly;
+      return bHourly - aHourly;
+    });
+  }, [models, modelRoleFilter, modelSearch, modelSort, modelStatusFilter, usageHourlyByModel]);
   const modelColorOptions = useMemo(() => {
     const normalizedSelected = normalizeHexColor(modelColor);
     if (AVAILABLE_MODEL_COLORS.includes(normalizedSelected as (typeof AVAILABLE_MODEL_COLORS)[number])) {
@@ -277,6 +405,7 @@ function App() {
     }
     return [normalizedSelected, ...AVAILABLE_MODEL_COLORS];
   }, [modelColor]);
+  const modelsById = useMemo(() => new Map(models.map((model) => [model.modelId, model])), [models]);
   const activeHourlyUsageRows = useMemo(
     () =>
       activeModels.map((model) => {
@@ -334,6 +463,69 @@ function App() {
     () => (totalHourlyCostUsd !== null ? totalHourlyCostUsd * 24 * 30 : null),
     [totalHourlyCostUsd],
   );
+  const activeHourlyCompositionRows = useMemo(
+    () =>
+      activeHourlyShareRows.map((row) => {
+        const usage = usageByModel[row.modelId];
+        const model = modelsById.get(row.modelId);
+        const ratios = getActionRatios(usage, model);
+        const promptHourlyUsd = (row.avgCostPerHourUsd * ratios.prompt) / 100;
+        const answerHourlyUsd = (row.avgCostPerHourUsd * ratios.answer) / 100;
+        const voteHourlyUsd = (row.avgCostPerHourUsd * ratios.vote) / 100;
+        return {
+          ...row,
+          promptSharePercent: ratios.prompt,
+          answerSharePercent: ratios.answer,
+          voteSharePercent: ratios.vote,
+          promptHourlyUsd,
+          answerHourlyUsd,
+          voteHourlyUsd,
+        };
+      }),
+    [activeHourlyShareRows, usageByModel, modelsById],
+  );
+  const actionTotals = useMemo(() => {
+    const promptHourlyUsd = activeHourlyCompositionRows.reduce((sum, row) => sum + row.promptHourlyUsd, 0);
+    const answerHourlyUsd = activeHourlyCompositionRows.reduce((sum, row) => sum + row.answerHourlyUsd, 0);
+    const voteHourlyUsd = activeHourlyCompositionRows.reduce((sum, row) => sum + row.voteHourlyUsd, 0);
+    const total = promptHourlyUsd + answerHourlyUsd + voteHourlyUsd;
+    return {
+      promptHourlyUsd,
+      answerHourlyUsd,
+      voteHourlyUsd,
+      promptPercent: total > 0 ? (promptHourlyUsd / total) * 100 : 0,
+      answerPercent: total > 0 ? (answerHourlyUsd / total) * 100 : 0,
+      votePercent: total > 0 ? (voteHourlyUsd / total) * 100 : 0,
+    };
+  }, [activeHourlyCompositionRows]);
+  const calcHoursPerDay = useMemo(() => safePositive(Number(calcHoursPerDayInput)), [calcHoursPerDayInput]);
+  const calcDaysPerWeek = useMemo(() => safePositive(Number(calcDaysPerWeekInput)), [calcDaysPerWeekInput]);
+  const calcDaysPerMonth = useMemo(() => safePositive(Number(calcDaysPerMonthInput)), [calcDaysPerMonthInput]);
+  const calcMonthlyBudget = useMemo(() => safePositive(Number(calcMonthlyBudgetInput)), [calcMonthlyBudgetInput]);
+  const customDailyCostUsd = useMemo(
+    () => (totalHourlyCostUsd !== null ? totalHourlyCostUsd * calcHoursPerDay : null),
+    [totalHourlyCostUsd, calcHoursPerDay],
+  );
+  const customWeeklyCostUsd = useMemo(
+    () => (totalHourlyCostUsd !== null ? totalHourlyCostUsd * calcHoursPerDay * calcDaysPerWeek : null),
+    [totalHourlyCostUsd, calcHoursPerDay, calcDaysPerWeek],
+  );
+  const customMonthlyCostUsd = useMemo(
+    () => (totalHourlyCostUsd !== null ? totalHourlyCostUsd * calcHoursPerDay * calcDaysPerMonth : null),
+    [totalHourlyCostUsd, calcHoursPerDay, calcDaysPerMonth],
+  );
+  const budgetUsagePercent = useMemo(() => {
+    if (!customMonthlyCostUsd || customMonthlyCostUsd <= 0 || calcMonthlyBudget <= 0) return 0;
+    return (customMonthlyCostUsd / calcMonthlyBudget) * 100;
+  }, [customMonthlyCostUsd, calcMonthlyBudget]);
+  const budgetRemainingUsd = useMemo(() => {
+    if (calcMonthlyBudget <= 0 || customMonthlyCostUsd === null) return null;
+    return calcMonthlyBudget - customMonthlyCostUsd;
+  }, [calcMonthlyBudget, customMonthlyCostUsd]);
+  const affordableHoursPerMonth = useMemo(() => {
+    if (!totalHourlyCostUsd || totalHourlyCostUsd <= 0 || calcMonthlyBudget <= 0) return null;
+    return calcMonthlyBudget / totalHourlyCostUsd;
+  }, [totalHourlyCostUsd, calcMonthlyBudget]);
 
   function resetTargetForm() {
     setTargetPlatform("twitch");
@@ -349,6 +541,9 @@ function App() {
     setModelLogoId("openai");
     setModelReasoningEffort(DEFAULT_MODEL_REASONING_EFFORT);
     setModelEnabled(true);
+    setModelCanPrompt(true);
+    setModelCanAnswer(true);
+    setModelCanVote(true);
     setEditingModelOriginalId(null);
     setIsModelFormOpen(false);
   }
@@ -360,6 +555,9 @@ function App() {
     setModelLogoId("openai");
     setModelReasoningEffort(DEFAULT_MODEL_REASONING_EFFORT);
     setModelEnabled(true);
+    setModelCanPrompt(true);
+    setModelCanAnswer(true);
+    setModelCanVote(true);
     setEditingModelOriginalId(null);
     setIsModelFormOpen(true);
   }
@@ -371,6 +569,9 @@ function App() {
     setModelLogoId(model.logoId);
     setModelReasoningEffort(model.reasoningEffort ?? REASONING_EFFORT_UNDEFINED);
     setModelEnabled(model.enabled);
+    setModelCanPrompt(model.canPrompt);
+    setModelCanAnswer(model.canAnswer);
+    setModelCanVote(model.canVote);
     setEditingModelOriginalId(model.modelId);
     setIsModelFormOpen(true);
   }
@@ -573,6 +774,9 @@ function App() {
             logoId: modelLogoId,
             reasoningEffort: reasoningEffortPayload,
             enabled: modelEnabled,
+            canPrompt: modelCanPrompt,
+            canAnswer: modelCanAnswer,
+            canVote: modelCanVote,
           }
         : {
             modelId: modelId.trim(),
@@ -581,6 +785,9 @@ function App() {
             logoId: modelLogoId,
             reasoningEffort: reasoningEffortPayload,
             enabled: modelEnabled,
+            canPrompt: modelCanPrompt,
+            canAnswer: modelCanAnswer,
+            canVote: modelCanVote,
           };
       const data = await requestAdminJson<ModelsResponse>(path, passcodeValue, {
         method: "POST",
@@ -693,6 +900,10 @@ function App() {
     }
   }
 
+  function onSelectPage(page: AdminPage) {
+    setActivePage(page);
+  }
+
   if (mode === "checking") {
     return (
       <div className="admin admin--centered">
@@ -776,14 +987,31 @@ function App() {
         <div className="panel-head">
           <h1>Console Admin</h1>
           <p>
-            Pausar ou retomar o loop do jogo, gerenciar o catalogo de modelos,
-            exportar dados e configurar targets de audiencia para Twitch e YouTube.
+            Controle do motor, catalogo de modelos, audiencia e custos em telas separadas.
           </p>
         </div>
 
+        <div className="admin-tabs" role="tablist" aria-label="Telas do console admin">
+          {ADMIN_PAGE_TABS.map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              role="tab"
+              aria-selected={activePage === tab.id}
+              className={`admin-tabs__item ${activePage === tab.id ? "admin-tabs__item--active" : ""}`}
+              onClick={() => onSelectPage(tab.id)}
+              disabled={busy}
+            >
+              <span className="admin-tabs__label">{tab.label}</span>
+            </button>
+          ))}
+        </div>
+        <p className="admin-tabs__hint">{ADMIN_PAGE_TABS.find((tab) => tab.id === activePage)?.description}</p>
+
         {error && <div className="error-banner">{error}</div>}
 
-        <section className="operations" aria-label="Operacao do sistema">
+        {activePage === "operations" && (
+        <section className="operations operations--standalone" aria-label="Operacao do sistema">
           <div className="operations__top">
             <div className="operations__intro">
               <h2>Operacao</h2>
@@ -841,7 +1069,13 @@ function App() {
             />
             <StatusCard
               label="Execucao"
-              value={snapshot?.canRunRounds ? "Pronto" : "Bloqueado (<3 modelos)"}
+              value={
+                snapshot?.canRunRounds
+                  ? "Pronto"
+                  : snapshot?.runBlockedReason === "insufficient_role_coverage"
+                    ? "Bloqueado (papeis)"
+                    : "Bloqueado (<3 modelos)"
+              }
             />
             <StatusCard label="Espectadores" value={String(snapshot?.viewerCount ?? 0)} />
           </section>
@@ -851,277 +1085,155 @@ function App() {
               Motor aguardando: ative ao menos 3 modelos para voltar a gerar rodadas.
             </div>
           )}
+          {snapshot?.runBlockedReason === "insufficient_role_coverage" && (
+            <div className="error-banner">
+              Motor aguardando: configure cobertura de papeis (pelo menos 1 prompt, 2 respostas e 1 voto fora dos
+              concorrentes).
+            </div>
+          )}
         </section>
+        )}
 
-        <section className="models">
+        {activePage === "models" && (
+        <section className="models models--standalone">
           <div className="section-head">
             <div>
               <h2>Modelos</h2>
               <p className="muted">
-                Prompt/Resposta/Voto exibem custo medio por request (nao o total acumulado) com janela das ultimas{" "}
-                {usageWindowSize} requests bem-sucedidas por tipo.
+                Configure papeis e custos por modelo. Janela atual: ultimas {usageWindowSize} requests por tipo.
               </p>
             </div>
-            <div className="models__header-actions">
-              <span className="models__count">
-                {activeModels.length} ativos de {models.length}
-              </span>
-              <label className="models__checkbox">
-                <input
-                  type="checkbox"
-                  checked={showArchivedModels}
-                  onChange={(event) => setShowArchivedModels(event.target.checked)}
-                  disabled={busy}
-                />
-                Mostrar arquivados
-              </label>
-              <button type="button" className="btn" disabled={busy} onClick={onRefreshModels}>
-                {pending === "refresh-models" ? "Atualizando..." : "Atualizar"}
-              </button>
+            <span className="models__count">
+              {filteredModels.length} exibidos de {modelStats.total}
+            </span>
+          </div>
+
+          <div className="models-ux__stats">
+            <div className="hour-card">
+              <span className="hour-card__label">Ativos</span>
+              <strong className="hour-card__value">{modelStats.active}</strong>
+            </div>
+            <div className="hour-card">
+              <span className="hour-card__label">Inativos</span>
+              <strong className="hour-card__value">{modelStats.inactive}</strong>
+            </div>
+            <div className="hour-card">
+              <span className="hour-card__label">Arquivados</span>
+              <strong className="hour-card__value">{modelStats.archived}</strong>
+            </div>
+            <div className="hour-card">
+              <span className="hour-card__label">Com resposta habilitada</span>
+              <strong className="hour-card__value">{modelStats.answerReady}</strong>
             </div>
           </div>
 
-          <div className="models__hourly">
-            <div className="models__hourly-cards">
-              <div className="hour-card">
-                <span className="hour-card__label">Media/h total (modelos ativos)</span>
-                <strong className="hour-card__value">{formatUsd(totalHourlyCostUsd)}</strong>
-              </div>
-              <div className="hour-card">
-                <span className="hour-card__label">Projecao diaria</span>
-                <strong className="hour-card__value">{formatUsd(projectedDailyCostUsd)}</strong>
-              </div>
-              <div className="hour-card">
-                <span className="hour-card__label">Projecao semanal</span>
-                <strong className="hour-card__value">{formatUsd(projectedWeeklyCostUsd)}</strong>
-              </div>
-              <div className="hour-card">
-                <span className="hour-card__label">Projecao mensal (30d)</span>
-                <strong className="hour-card__value">{formatUsd(projectedMonthlyCostUsd)}</strong>
-              </div>
-            </div>
-            <div className="models__share-chart" aria-label="Participacao por modelo no custo medio por hora">
-              <h3>Participacao dos modelos ativos no custo medio por hora</h3>
-              {activeHourlyShareRows.length === 0 ? (
-                <div className="targets__empty">Sem modelos ativos para calcular participacao.</div>
-              ) : (
-                <div className="models__share-list">
-                  {activeHourlyShareRows.map((row) => {
-                    const width = Math.min(100, Math.max(0, row.sharePercent));
-                    return (
-                      <div key={row.modelId} className="models__share-row">
-                        <div className="models__share-meta">
-                          <span className="models__share-name">
-                            <span className="model-row__swatch" style={{ background: row.color }} />
-                            {row.name}
-                          </span>
-                          <span className="models__share-values">
-                            {formatUsd(row.avgCostPerHourUsd)}/h | {formatPercent(row.sharePercent)}
-                          </span>
-                        </div>
-                        <div className="models__share-bar" aria-hidden="true">
-                          <span style={{ width: `${width}%`, background: row.color }} />
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
+          <div className="models-ux__toolbar">
+            <input
+              className="text-input models-ux__search"
+              value={modelSearch}
+              onChange={(event) => setModelSearch(event.target.value)}
+              placeholder="Buscar por nome ou model id"
+              disabled={busy}
+            />
+            <select
+              className="text-input models-ux__select"
+              value={modelStatusFilter}
+              onChange={(event) => setModelStatusFilter(event.target.value as ModelStatusFilter)}
+              disabled={busy}
+            >
+              <option value="all">Todos os status</option>
+              <option value="active">Ativos</option>
+              <option value="inactive">Inativos</option>
+              <option value="archived">Arquivados</option>
+            </select>
+            <select
+              className="text-input models-ux__select"
+              value={modelRoleFilter}
+              onChange={(event) => setModelRoleFilter(event.target.value as ModelRoleFilter)}
+              disabled={busy}
+            >
+              <option value="all">Todos os papeis</option>
+              <option value="prompt">Pode escrever prompt</option>
+              <option value="answer">Pode responder</option>
+              <option value="vote">Pode votar</option>
+            </select>
+            <select
+              className="text-input models-ux__select"
+              value={modelSort}
+              onChange={(event) => setModelSort(event.target.value as ModelSort)}
+              disabled={busy}
+            >
+              <option value="cost_desc">Ordenar por custo/h (maior)</option>
+              <option value="cost_asc">Ordenar por custo/h (menor)</option>
+              <option value="recent">Mais recentes</option>
+              <option value="name">Nome (A-Z)</option>
+            </select>
+            <button type="button" className="btn" disabled={busy} onClick={onRefreshModels}>
+              {pending === "refresh-models" ? "Atualizando..." : "Atualizar"}
+            </button>
+            <button
+              type="button"
+              className="btn btn--primary"
+              disabled={busy}
+              onClick={openCreateModelForm}
+            >
+              Novo modelo
+            </button>
           </div>
 
-          <div className="models__workspace">
-            <aside className="models__editor">
-              <div className="models__editor-head">
-                <h3>{editingModelOriginalId ? "Editar modelo" : "Cadastro de modelo"}</h3>
-                {!isModelFormOpen && (
-                  <button
-                    type="button"
-                    className="btn btn--primary"
-                    disabled={busy}
-                    onClick={openCreateModelForm}
-                  >
-                    Adicionar modelo
-                  </button>
-                )}
-              </div>
-
-              {editingModelOriginalId && isModelFormOpen && (
-                <p className="muted">
-                  Editando modelo: <code>{editingModelOriginalId}</code>
-                </p>
-              )}
-
-              {isModelFormOpen ? (
-                <form className="models__form" onSubmit={onSaveModel}>
-                  <label className="field-label" htmlFor="model-id">
-                    Model ID
-                  </label>
-                  <input
-                    id="model-id"
-                    className="text-input"
-                    value={modelId}
-                    onChange={(event) => setModelId(event.target.value)}
-                    placeholder="openai/gpt-5.2"
-                    disabled={busy}
-                    required
-                  />
-
-                  <label className="field-label" htmlFor="model-name">
-                    Nome
-                  </label>
-                  <input
-                    id="model-name"
-                    className="text-input"
-                    value={modelName}
-                    onChange={(event) => setModelName(event.target.value)}
-                    placeholder="GPT-5.2"
-                    disabled={busy}
-                    required
-                  />
-
-                  <label className="field-label" htmlFor="model-color">
-                    Cor
-                  </label>
-                  <div className="models__color-field" id="model-color" role="radiogroup" aria-label="Cor do modelo">
-                    <div className="models__color-palette">
-                      {modelColorOptions.map((colorValue) => {
-                        const selected = normalizeHexColor(modelColor) === colorValue;
-                        return (
-                          <button
-                            key={colorValue}
-                            type="button"
-                            className={`model-color-swatch ${selected ? "model-color-swatch--selected" : ""}`}
-                            style={{ backgroundColor: colorValue }}
-                            onClick={() => setModelColor(colorValue)}
-                            disabled={busy}
-                            title={colorValue}
-                            aria-label={`Selecionar cor ${colorValue}`}
-                            aria-checked={selected}
-                            role="radio"
-                          />
-                        );
-                      })}
-                    </div>
-                    <span className="models__color-value">{normalizeHexColor(modelColor)}</span>
-                  </div>
-
-                  <label className="field-label" htmlFor="model-logo">
-                    Logo
-                  </label>
-                  <select
-                    id="model-logo"
-                    className="text-input"
-                    value={modelLogoId}
-                    onChange={(event) =>
-                      setModelLogoId(event.target.value as (typeof AVAILABLE_MODEL_LOGO_IDS)[number])
-                    }
-                    disabled={busy}
-                  >
-                    {AVAILABLE_MODEL_LOGO_IDS.map((logoId) => (
-                      <option key={logoId} value={logoId}>
-                        {logoId}
-                      </option>
-                    ))}
-                  </select>
-
-                  <label className="field-label" htmlFor="model-reasoning-effort">
-                    Reasoning Effort
-                  </label>
-                  <select
-                    id="model-reasoning-effort"
-                    className="text-input"
-                    value={modelReasoningEffort}
-                    onChange={(event) =>
-                      setModelReasoningEffort(
-                        event.target.value as ModelReasoningEffortFormValue,
-                      )
-                    }
-                    disabled={busy}
-                  >
-                    <option value={REASONING_EFFORT_UNDEFINED}>{DEFAULT_REASONING_LABEL}</option>
-                    {AVAILABLE_REASONING_EFFORTS.map((effort) => (
-                      <option key={effort} value={effort}>
-                        {effort}
-                      </option>
-                    ))}
-                  </select>
-
-                  <label className="models__checkbox">
-                    <input
-                      type="checkbox"
-                      checked={modelEnabled}
-                      onChange={(event) => setModelEnabled(event.target.checked)}
-                      disabled={busy}
-                    />
-                    Criar como ativo
-                  </label>
-
-                  <div className="models__form-actions">
-                    <button
-                      type="submit"
-                      className="btn btn--primary"
-                      disabled={busy || !modelId.trim() || !modelName.trim()}
-                    >
-                      {pending === "save-model"
-                        ? "Salvando..."
-                        : editingModelOriginalId
-                          ? "Salvar Edicao"
-                          : "Salvar Modelo"}
-                    </button>
-                    <button type="button" className="btn" onClick={resetModelForm} disabled={busy}>
-                      Cancelar
-                    </button>
-                  </div>
-                </form>
-              ) : (
-                <p className="muted">Clique em <code>Adicionar modelo</code> para abrir o formulario.</p>
-              )}
-            </aside>
-
-            <div className="models__catalog">
+          <div className="models-ux__layout models-ux__layout--single">
+            <div className="models-ux__catalog">
               <div className="models__catalog-head">
-                <h3>Catalogo</h3>
-                <span className="models__count">{visibleModels.length} visiveis</span>
+                <h3>Lista de modelos</h3>
+                <span className="models__count">{filteredModels.length} resultados</span>
               </div>
 
               <div className="models__list">
-                {visibleModels.length === 0 ? (
-                  <div className="targets__empty">
-                    {models.length === 0
-                      ? "Nenhum modelo cadastrado."
-                      : "Nenhum modelo visivel com o filtro atual."}
-                  </div>
+                {filteredModels.length === 0 ? (
+                  <div className="targets__empty">Nenhum modelo encontrado com os filtros atuais.</div>
                 ) : (
-                  visibleModels.map((model) => {
+                  filteredModels.map((model) => {
                     const archived = Boolean(model.archivedAt);
                     const usage = usageByModel[model.modelId];
                     const hourlyUsage = usageHourlyByModel[model.modelId];
+                    const stateLabel = archived ? "arquivado" : model.enabled ? "ativo" : "inativo";
                     return (
-                      <div className="model-row" key={model.modelId}>
-                        <div className="model-row__meta">
-                          <div className="model-row__name-wrap">
-                            <span className="model-row__swatch" style={{ background: model.color }} />
-                            <span className="model-row__name">{model.name}</span>
-                            <span
-                              className={`model-row__state ${archived ? "model-row__state--archived" : ""}`}
-                            >
-                              {archived ? "arquivado" : model.enabled ? "ativo" : "inativo"}
-                            </span>
-                          </div>
-                          <span className="model-row__id">{model.modelId}</span>
-                          <span className="model-row__id">
-                            logo: {model.logoId} | effort: {model.reasoningEffort ?? DEFAULT_REASONING_LABEL} |{" "}
-                            {formatArchivedAt(model.archivedAt)}
+                      <article
+                        key={model.modelId}
+                        className="model-card"
+                      >
+                        <button
+                          type="button"
+                          className="model-card__primary"
+                          onClick={() => {
+                            if (!archived) {
+                              hydrateModelForm(model);
+                            }
+                          }}
+                          disabled={archived}
+                        >
+                          <span className="model-row__swatch" style={{ background: model.color }} />
+                          <span className="model-card__name">{model.name}</span>
+                          <span className="model-card__id">{model.modelId}</span>
+                          <span className={`model-row__state ${archived ? "model-row__state--archived" : ""}`}>
+                            {stateLabel}
                           </span>
-                          <div className="model-row__usage">
-                            <span>{formatUsageLine("Prompt avg", usage?.prompt)}</span>
-                            <span>{formatUsageLine("Resposta avg", usage?.answer)}</span>
-                            <span>{formatUsageLine("Voto avg", usage?.vote)}</span>
-                            <span>{formatHourlyUsageLine(hourlyUsage)}</span>
-                          </div>
+                        </button>
+
+                        <div className="model-card__roles">
+                          <span className={`role-pill ${model.canPrompt ? "" : "role-pill--off"}`}>Prompt</span>
+                          <span className={`role-pill ${model.canAnswer ? "" : "role-pill--off"}`}>Resposta</span>
+                          <span className={`role-pill ${model.canVote ? "" : "role-pill--off"}`}>Voto</span>
                         </div>
-                        <div className="model-row__actions">
+
+                        <div className="model-card__usage">
+                          <span>{formatHourlyUsageLine(hourlyUsage)}</span>
+                          <span>{formatUsageLine("Prompt avg", usage?.prompt)}</span>
+                          <span>{formatUsageLine("Resposta avg", usage?.answer)}</span>
+                          <span>{formatUsageLine("Voto avg", usage?.vote)}</span>
+                        </div>
+
+                        <div className="model-card__actions">
                           {archived ? (
                             <button
                               type="button"
@@ -1161,16 +1273,19 @@ function App() {
                             </>
                           )}
                         </div>
-                      </div>
+                      </article>
                     );
                   })
                 )}
               </div>
             </div>
+
           </div>
         </section>
+        )}
 
-        <section className="targets">
+        {activePage === "targets" && (
+        <section className="targets targets--standalone">
           <div className="section-head">
             <div>
               <h2>Targets de Audiencia</h2>
@@ -1295,7 +1410,398 @@ function App() {
             </div>
           </div>
         </section>
+        )}
+
+        {activePage === "projections" && (
+          <section className="projections">
+            <div className="section-head">
+              <div>
+                <h2>Projecoes e Calculo de Preco</h2>
+                <p className="muted">
+                  Baseado nas ultimas {usageWindowSize} requests por tipo, com divisao por modelo e por acao.
+                </p>
+              </div>
+              <button type="button" className="btn" disabled={busy} onClick={onRefreshModels}>
+                {pending === "refresh-models" ? "Atualizando..." : "Atualizar dados"}
+              </button>
+            </div>
+
+            <div className="models__hourly-cards">
+              <div className="hour-card">
+                <span className="hour-card__label">Media/h total (modelos ativos)</span>
+                <strong className="hour-card__value">{formatUsd(totalHourlyCostUsd)}</strong>
+              </div>
+              <div className="hour-card">
+                <span className="hour-card__label">Projecao diaria (24h)</span>
+                <strong className="hour-card__value">{formatUsd(projectedDailyCostUsd)}</strong>
+              </div>
+              <div className="hour-card">
+                <span className="hour-card__label">Projecao semanal (7d)</span>
+                <strong className="hour-card__value">{formatUsd(projectedWeeklyCostUsd)}</strong>
+              </div>
+              <div className="hour-card">
+                <span className="hour-card__label">Projecao mensal (30d)</span>
+                <strong className="hour-card__value">{formatUsd(projectedMonthlyCostUsd)}</strong>
+              </div>
+            </div>
+
+            <div className="projections__workspace">
+              <aside className="projections__calculator">
+                <h3>Calculadora</h3>
+                <p className="muted">
+                  Ajuste carga diaria e budget para prever gasto.
+                </p>
+                <div className="projections__fields">
+                  <label className="field-label" htmlFor="calc-hours-day">
+                    Horas por dia
+                  </label>
+                  <input
+                    id="calc-hours-day"
+                    className="text-input"
+                    type="number"
+                    min={0}
+                    step={0.5}
+                    value={calcHoursPerDayInput}
+                    onChange={(event) => setCalcHoursPerDayInput(event.target.value)}
+                  />
+
+                  <label className="field-label" htmlFor="calc-days-week">
+                    Dias por semana
+                  </label>
+                  <input
+                    id="calc-days-week"
+                    className="text-input"
+                    type="number"
+                    min={0}
+                    step={1}
+                    value={calcDaysPerWeekInput}
+                    onChange={(event) => setCalcDaysPerWeekInput(event.target.value)}
+                  />
+
+                  <label className="field-label" htmlFor="calc-days-month">
+                    Dias por mes
+                  </label>
+                  <input
+                    id="calc-days-month"
+                    className="text-input"
+                    type="number"
+                    min={0}
+                    step={1}
+                    value={calcDaysPerMonthInput}
+                    onChange={(event) => setCalcDaysPerMonthInput(event.target.value)}
+                  />
+
+                  <label className="field-label" htmlFor="calc-budget-month">
+                    Budget mensal (USD)
+                  </label>
+                  <input
+                    id="calc-budget-month"
+                    className="text-input"
+                    type="number"
+                    min={0}
+                    step={10}
+                    value={calcMonthlyBudgetInput}
+                    onChange={(event) => setCalcMonthlyBudgetInput(event.target.value)}
+                  />
+                </div>
+
+                <div className="projections__totals">
+                  <div className="hour-card">
+                    <span className="hour-card__label">Sua projecao diaria</span>
+                    <strong className="hour-card__value">{formatUsd(customDailyCostUsd)}</strong>
+                  </div>
+                  <div className="hour-card">
+                    <span className="hour-card__label">Sua projecao semanal</span>
+                    <strong className="hour-card__value">{formatUsd(customWeeklyCostUsd)}</strong>
+                  </div>
+                  <div className="hour-card">
+                    <span className="hour-card__label">Sua projecao mensal</span>
+                    <strong className="hour-card__value">{formatUsd(customMonthlyCostUsd)}</strong>
+                  </div>
+                </div>
+
+                <div className="projections__budget">
+                  <span className="projections__budget-label">Uso do budget mensal</span>
+                  <strong
+                    className={`projections__budget-value ${
+                      budgetUsagePercent > 100 ? "projections__budget-value--over" : ""
+                    }`}
+                  >
+                    {formatPercent(budgetUsagePercent)}
+                  </strong>
+                  <span
+                    className={`projections__budget-delta ${
+                      budgetRemainingUsd !== null && budgetRemainingUsd < 0
+                        ? "projections__budget-delta--over"
+                        : ""
+                    }`}
+                  >
+                    {budgetRemainingUsd === null ? "Saldo: N/D" : `Saldo: ${formatUsd(budgetRemainingUsd)}`}
+                  </span>
+                  <span className="projections__budget-delta">
+                    Horas/mes suportadas:{" "}
+                    {affordableHoursPerMonth === null ? "N/D" : affordableHoursPerMonth.toFixed(1)}
+                  </span>
+                </div>
+              </aside>
+
+              <div className="projections__analytics">
+                <div className="projections__action-summary">
+                  <h3>Composicao total por acao</h3>
+                  <div className="projections__action-bar" aria-hidden="true">
+                    <span
+                      className="models__share-segment models__share-segment--prompt"
+                      style={{ width: `${actionTotals.promptPercent}%` }}
+                    />
+                    <span
+                      className="models__share-segment models__share-segment--answer"
+                      style={{ width: `${actionTotals.answerPercent}%` }}
+                    />
+                    <span
+                      className="models__share-segment models__share-segment--vote"
+                      style={{ width: `${actionTotals.votePercent}%` }}
+                    />
+                  </div>
+                  <div className="projections__action-legend">
+                    <span>
+                      Prompt: {formatUsd(actionTotals.promptHourlyUsd)}/h ({formatPercent(actionTotals.promptPercent)})
+                    </span>
+                    <span>
+                      Resposta: {formatUsd(actionTotals.answerHourlyUsd)}/h (
+                      {formatPercent(actionTotals.answerPercent)})
+                    </span>
+                    <span>
+                      Voto: {formatUsd(actionTotals.voteHourlyUsd)}/h ({formatPercent(actionTotals.votePercent)})
+                    </span>
+                  </div>
+                </div>
+
+                <div className="models__share-chart" aria-label="Participacao por modelo no custo medio por hora">
+                  <h3>Participacao por modelo com divisao por acao</h3>
+                  {activeHourlyCompositionRows.length === 0 ? (
+                    <div className="targets__empty">Sem modelos ativos para calcular participacao.</div>
+                  ) : (
+                    <div className="models__share-list">
+                      {activeHourlyCompositionRows.map((row) => {
+                        const width = Math.min(100, Math.max(0, row.sharePercent));
+                        return (
+                          <div key={row.modelId} className="models__share-row">
+                            <div className="models__share-meta">
+                              <span className="models__share-name">
+                                <span className="model-row__swatch" style={{ background: row.color }} />
+                                {row.name}
+                              </span>
+                              <span className="models__share-values">
+                                {formatUsd(row.avgCostPerHourUsd)}/h | {formatPercent(row.sharePercent)}
+                              </span>
+                            </div>
+                            <div className="models__share-bar" aria-hidden="true">
+                              <div className="models__share-fill" style={{ width: `${width}%` }}>
+                                <span
+                                  className="models__share-segment models__share-segment--prompt"
+                                  style={{ width: `${row.promptSharePercent}%` }}
+                                />
+                                <span
+                                  className="models__share-segment models__share-segment--answer"
+                                  style={{ width: `${row.answerSharePercent}%` }}
+                                />
+                                <span
+                                  className="models__share-segment models__share-segment--vote"
+                                  style={{ width: `${row.voteSharePercent}%` }}
+                                />
+                              </div>
+                            </div>
+                            <div className="models__share-actions">
+                              <span>
+                                P: {formatPercent(row.promptSharePercent)} ({formatUsd(row.promptHourlyUsd)}/h)
+                              </span>
+                              <span>
+                                R: {formatPercent(row.answerSharePercent)} ({formatUsd(row.answerHourlyUsd)}/h)
+                              </span>
+                              <span>
+                                V: {formatPercent(row.voteSharePercent)} ({formatUsd(row.voteHourlyUsd)}/h)
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </section>
+        )}
       </main>
+
+      {isModelFormOpen && (
+        <div className="modal-backdrop" role="dialog" aria-modal="true">
+          <div className="modal modal--model">
+            <div className="models__editor-head">
+              <h2>{editingModelOriginalId ? "Editar modelo" : "Novo modelo"}</h2>
+              <button type="button" className="btn" onClick={resetModelForm} disabled={busy}>
+                Fechar
+              </button>
+            </div>
+            {editingModelOriginalId && (
+              <p className="muted">
+                Editando modelo: <code>{editingModelOriginalId}</code>
+              </p>
+            )}
+            <form className="models__form" onSubmit={onSaveModel}>
+              <label className="field-label" htmlFor="model-id">
+                Model ID
+              </label>
+              <input
+                id="model-id"
+                className="text-input"
+                value={modelId}
+                onChange={(event) => setModelId(event.target.value)}
+                placeholder="openai/gpt-5.2"
+                disabled={busy}
+                required
+              />
+
+              <label className="field-label" htmlFor="model-name">
+                Nome
+              </label>
+              <input
+                id="model-name"
+                className="text-input"
+                value={modelName}
+                onChange={(event) => setModelName(event.target.value)}
+                placeholder="GPT-5.2"
+                disabled={busy}
+                required
+              />
+
+              <label className="field-label" htmlFor="model-color">
+                Cor
+              </label>
+              <div className="models__color-field" id="model-color" role="radiogroup" aria-label="Cor do modelo">
+                <div className="models__color-palette">
+                  {modelColorOptions.map((colorValue) => {
+                    const selected = normalizeHexColor(modelColor) === colorValue;
+                    return (
+                      <button
+                        key={colorValue}
+                        type="button"
+                        className={`model-color-swatch ${selected ? "model-color-swatch--selected" : ""}`}
+                        style={{ backgroundColor: colorValue }}
+                        onClick={() => setModelColor(colorValue)}
+                        disabled={busy}
+                        title={colorValue}
+                        aria-label={`Selecionar cor ${colorValue}`}
+                        aria-checked={selected}
+                        role="radio"
+                      />
+                    );
+                  })}
+                </div>
+                <span className="models__color-value">{normalizeHexColor(modelColor)}</span>
+              </div>
+
+              <label className="field-label" htmlFor="model-logo">
+                Logo
+              </label>
+              <select
+                id="model-logo"
+                className="text-input"
+                value={modelLogoId}
+                onChange={(event) =>
+                  setModelLogoId(event.target.value as (typeof AVAILABLE_MODEL_LOGO_IDS)[number])
+                }
+                disabled={busy}
+              >
+                {AVAILABLE_MODEL_LOGO_IDS.map((logoId) => (
+                  <option key={logoId} value={logoId}>
+                    {logoId}
+                  </option>
+                ))}
+              </select>
+
+              <label className="field-label" htmlFor="model-reasoning-effort">
+                Reasoning Effort
+              </label>
+              <select
+                id="model-reasoning-effort"
+                className="text-input"
+                value={modelReasoningEffort}
+                onChange={(event) =>
+                  setModelReasoningEffort(
+                    event.target.value as ModelReasoningEffortFormValue,
+                  )
+                }
+                disabled={busy}
+              >
+                <option value={REASONING_EFFORT_UNDEFINED}>{DEFAULT_REASONING_LABEL}</option>
+                {AVAILABLE_REASONING_EFFORTS.map((effort) => (
+                  <option key={effort} value={effort}>
+                    {effort}
+                  </option>
+                ))}
+              </select>
+
+              <label className="models__checkbox">
+                <input
+                  type="checkbox"
+                  checked={modelCanPrompt}
+                  onChange={(event) => setModelCanPrompt(event.target.checked)}
+                  disabled={busy}
+                />
+                Pode escrever prompt
+              </label>
+
+              <label className="models__checkbox">
+                <input
+                  type="checkbox"
+                  checked={modelCanAnswer}
+                  onChange={(event) => setModelCanAnswer(event.target.checked)}
+                  disabled={busy}
+                />
+                Pode responder
+              </label>
+
+              <label className="models__checkbox">
+                <input
+                  type="checkbox"
+                  checked={modelCanVote}
+                  onChange={(event) => setModelCanVote(event.target.checked)}
+                  disabled={busy}
+                />
+                Pode votar
+              </label>
+
+              <label className="models__checkbox">
+                <input
+                  type="checkbox"
+                  checked={modelEnabled}
+                  onChange={(event) => setModelEnabled(event.target.checked)}
+                  disabled={busy}
+                />
+                Criar como ativo
+              </label>
+
+              <div className="models__form-actions">
+                <button
+                  type="submit"
+                  className="btn btn--primary"
+                  disabled={busy || !modelId.trim() || !modelName.trim()}
+                >
+                  {pending === "save-model"
+                    ? "Salvando..."
+                    : editingModelOriginalId
+                      ? "Salvar Edicao"
+                      : "Salvar Modelo"}
+                </button>
+                <button type="button" className="btn" onClick={resetModelForm} disabled={busy}>
+                  Cancelar
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {isResetOpen && (
         <div className="modal-backdrop" role="dialog" aria-modal="true">
@@ -1346,3 +1852,5 @@ function App() {
 
 const root = createRoot(document.getElementById("root")!);
 root.render(<App />);
+
+
