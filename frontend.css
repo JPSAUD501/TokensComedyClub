@@ -815,12 +815,10 @@ body {
 /* ── Desktop (1024px+) ───────────────────────────────────────── */
 
 @media (min-width: 1024px) {
-  body {
+  .live-page {
     height: 100vh;
     overflow: hidden;
   }
-
-  .app { height: 100vh; }
 
   .layout {
     flex-direction: row;

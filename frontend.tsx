@@ -853,7 +853,7 @@ function App() {
       : null;
 
   return (
-    <div className="app">
+    <div className="app live-page">
       <div className="layout">
         <main className="main">
           <header className="header">
