@@ -28,6 +28,72 @@ function average(values: number[]): number | null {
   return values.reduce((sum, value) => sum + value, 0) / values.length;
 }
 
+function safeNumber(value: unknown): number {
+  return Number.isFinite(value) ? Number(value) : 0;
+}
+
+function sum(values: number[]): number {
+  return values.reduce((acc, value) => acc + value, 0);
+}
+
+function buildHourlyCostSummary(events: any[]) {
+  if (events.length === 0) {
+    return {
+      sampleSize: 0,
+      totalCostUsd: 0,
+      windowHours: null as number | null,
+      avgCostPerHourUsd: null as number | null,
+    };
+  }
+
+  const totalCostUsd = sum(events.map((event) => safeNumber(event.costUsd)));
+  const startCandidates = events.map((event) => {
+    const startedAt = safeNumber(event.startedAt);
+    if (startedAt > 0) return startedAt;
+    const finishedAt = safeNumber(event.finishedAt);
+    const durationMs = Math.max(0, safeNumber(event.durationMsFinal));
+    return finishedAt > 0 ? finishedAt - durationMs : 0;
+  });
+  const finishCandidates = events.map((event) => {
+    const finishedAt = safeNumber(event.finishedAt);
+    if (finishedAt > 0) return finishedAt;
+    const startedAt = safeNumber(event.startedAt);
+    const durationMs = Math.max(0, safeNumber(event.durationMsFinal));
+    return startedAt > 0 ? startedAt + durationMs : 0;
+  });
+
+  const minStartedAt = Math.min(...startCandidates.filter((value) => value > 0));
+  const maxFinishedAt = Math.max(...finishCandidates.filter((value) => value > 0));
+  let spanMs =
+    Number.isFinite(minStartedAt) &&
+    Number.isFinite(maxFinishedAt) &&
+    minStartedAt > 0 &&
+    maxFinishedAt > 0
+      ? maxFinishedAt - minStartedAt
+      : 0;
+
+  if (spanMs <= 0) {
+    spanMs = sum(events.map((event) => Math.max(0, safeNumber(event.durationMsFinal))));
+  }
+
+  if (spanMs <= 0) {
+    return {
+      sampleSize: events.length,
+      totalCostUsd,
+      windowHours: null as number | null,
+      avgCostPerHourUsd: null as number | null,
+    };
+  }
+
+  const windowHours = spanMs / (1000 * 60 * 60);
+  return {
+    sampleSize: events.length,
+    totalCostUsd,
+    windowHours,
+    avgCostPerHourUsd: windowHours > 0 ? totalCostUsd / windowHours : null,
+  };
+}
+
 function usageSummary(events: any[], denominator: number) {
   const avgCostUsd = average(events.map((event) => event.costUsd));
   const avgDurationMs = average(events.map((event) => event.durationMsFinal));
@@ -172,7 +238,13 @@ export const getAdminModelUsageAverages = internalQuery({
       : USAGE_WINDOW_SIZE;
 
     if (!state) {
-      return { usageByModel: {}, usageWindowSize: windowSize };
+      return {
+        usageByModel: {},
+        usageHourlyByModel: {},
+        usageWindowSize: windowSize,
+        activeModelsAvgCostPerHourUsd: null,
+        activeModelsHourlyShareByModel: {},
+      };
     }
 
     const generation = state.generation;
@@ -225,6 +297,7 @@ export const getAdminModelUsageAverages = internalQuery({
     }
 
     const usageByModel: Record<string, any> = {};
+    const usageHourlyByModel: Record<string, any> = {};
     for (const model of models) {
       const modelId = model.modelId;
       const modelEpoch = safeEpoch(model.metricsEpoch);
@@ -269,14 +342,38 @@ export const getAdminModelUsageAverages = internalQuery({
           .take(windowSize),
       ]);
 
+      const allEvents = [...promptEvents, ...answerEvents, ...voteEvents];
+
       usageByModel[modelId] = {
         prompt: usageSummary(promptEvents, promptDenominator),
         answer: usageSummary(answerEvents, answerDenominator),
         vote: usageSummary(voteEvents, voteDenominator),
       };
+      usageHourlyByModel[modelId] = buildHourlyCostSummary(allEvents);
     }
 
-    return { usageByModel, usageWindowSize: windowSize };
+    const activeModelIds = models
+      .filter((model) => model.enabled && !model.archivedAt)
+      .map((model) => model.modelId);
+    const activeModelsAvgCostPerHourUsd = sum(
+      activeModelIds.map((modelId) => safeNumber(usageHourlyByModel[modelId]?.avgCostPerHourUsd)),
+    );
+    const activeModelsHourlyShareByModel: Record<string, number> = {};
+    for (const modelId of activeModelIds) {
+      const modelHourly = safeNumber(usageHourlyByModel[modelId]?.avgCostPerHourUsd);
+      activeModelsHourlyShareByModel[modelId] =
+        activeModelsAvgCostPerHourUsd > 0 ? (modelHourly / activeModelsAvgCostPerHourUsd) * 100 : 0;
+    }
+
+    return {
+      usageByModel,
+      usageHourlyByModel,
+      usageWindowSize: windowSize,
+      activeModelsAvgCostPerHourUsd: activeModelsAvgCostPerHourUsd > 0
+        ? activeModelsAvgCostPerHourUsd
+        : null,
+      activeModelsHourlyShareByModel,
+    };
   },
 });
 

@@ -8,6 +8,7 @@ export const AVAILABLE_MODEL_LOGO_IDS = [
   "minimax",
   "openai",
   "qwen",
+  "xiaomi",
 ] as const;
 
 export const AVAILABLE_REASONING_EFFORTS = [
@@ -18,6 +19,7 @@ export const AVAILABLE_REASONING_EFFORTS = [
   "minimal",
   "none",
 ] as const;
+export const REASONING_EFFORT_UNDEFINED = "undefined" as const;
 
 export const AVAILABLE_MODEL_COLORS = [
   "#10A37F",
@@ -64,7 +66,7 @@ export type ModelCatalogEntry = {
   name: string;
   color: string;
   logoId: ModelLogoId;
-  reasoningEffort: ModelReasoningEffort;
+  reasoningEffort?: ModelReasoningEffort;
   metricsEpoch: number;
   enabled: boolean;
   archivedAt?: number;
@@ -92,11 +94,19 @@ export function getLogoUrlById(logoId?: string | null): string | null {
 }
 
 export function normalizeModelReasoningEffort(input?: string | null): ModelReasoningEffort {
+  const parsed = parseModelReasoningEffort(input);
+  if (parsed) return parsed;
+  return DEFAULT_MODEL_REASONING_EFFORT;
+}
+
+export function parseModelReasoningEffort(
+  input?: string | null,
+): ModelReasoningEffort | undefined {
   const value = (input ?? "").trim().toLowerCase();
   if (isValidModelReasoningEffort(value)) {
     return value;
   }
-  return DEFAULT_MODEL_REASONING_EFFORT;
+  return undefined;
 }
 
 export function normalizeHexColor(input?: string | null): string {
@@ -118,7 +128,7 @@ export function toRuntimeModel(
     name: entry.name,
     color: normalizeHexColor(entry.color),
     logoId: entry.logoId,
-    reasoningEffort: normalizeModelReasoningEffort(entry.reasoningEffort),
+    reasoningEffort: parseModelReasoningEffort(entry.reasoningEffort),
     metricsEpoch: Number.isFinite(entry.metricsEpoch) ? entry.metricsEpoch : 1,
   };
 }

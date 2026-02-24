@@ -4,7 +4,7 @@ import {
   AVAILABLE_MODEL_LOGO_IDS,
   DEFAULT_MODEL_REASONING_EFFORT,
   isValidModelLogoId,
-  normalizeModelReasoningEffort,
+  parseModelReasoningEffort,
   normalizeHexColor,
   toRuntimeModel,
   type Model,
@@ -29,6 +29,7 @@ const reasoningEffortValidator = v.union(
   v.literal("minimal"),
   v.literal("none"),
 );
+const reasoningEffortInputValidator = v.union(reasoningEffortValidator, v.null());
 
 const LEGACY_MODEL_SEED: SeedModel[] = [
   {
@@ -122,7 +123,7 @@ function toCatalogEntry(row: any): ModelCatalogEntry {
     name: row.name,
     color: normalizeHexColor(row.color),
     logoId: row.logoId,
-    reasoningEffort: normalizeModelReasoningEffort(row.reasoningEffort),
+    reasoningEffort: parseModelReasoningEffort(row.reasoningEffort),
     metricsEpoch: Number.isFinite(row.metricsEpoch) ? row.metricsEpoch : 1,
     enabled: Boolean(row.enabled),
     archivedAt: row.archivedAt,
@@ -273,7 +274,7 @@ export const createModel = internalMutation({
     name: v.string(),
     color: v.string(),
     logoId: v.string(),
-    reasoningEffort: v.optional(reasoningEffortValidator),
+    reasoningEffort: v.optional(reasoningEffortInputValidator),
     enabled: v.optional(v.boolean()),
   },
   returns: v.any(),
@@ -282,9 +283,10 @@ export const createModel = internalMutation({
     const name = trimRequired(args.name, "name");
     const color = trimRequired(args.color, "color");
     const logoId = trimRequired(args.logoId, "logoId");
-    const reasoningEffort = normalizeModelReasoningEffort(
-      args.reasoningEffort ?? DEFAULT_MODEL_REASONING_EFFORT,
-    );
+    const reasoningEffort =
+      args.reasoningEffort === null
+        ? undefined
+        : parseModelReasoningEffort(args.reasoningEffort) ?? DEFAULT_MODEL_REASONING_EFFORT;
     assertLogoId(logoId);
     if (!isHexColor(color)) {
       throw new Error("Cor invalida. Use formato #RRGGBB.");
@@ -330,7 +332,7 @@ export const createModel = internalMutation({
         name,
         color: normalizeHexColor(color),
         logoId,
-        reasoningEffort,
+        ...(reasoningEffort ? { reasoningEffort } : {}),
         metricsEpoch: 1,
         enabled: args.enabled ?? true,
         createdAt: now,
@@ -438,7 +440,7 @@ export const updateModel = internalMutation({
     name: v.string(),
     color: v.string(),
     logoId: v.string(),
-    reasoningEffort: v.optional(reasoningEffortValidator),
+    reasoningEffort: v.optional(reasoningEffortInputValidator),
     enabled: v.boolean(),
   },
   returns: v.any(),
@@ -464,9 +466,13 @@ export const updateModel = internalMutation({
       throw new Error("Modelo arquivado nao pode ser editado.");
     }
 
-    const reasoningEffort = normalizeModelReasoningEffort(
-      args.reasoningEffort ?? existing.reasoningEffort ?? DEFAULT_MODEL_REASONING_EFFORT,
-    );
+    const existingReasoningEffort = parseModelReasoningEffort(existing.reasoningEffort);
+    const reasoningEffort =
+      args.reasoningEffort === undefined
+        ? existingReasoningEffort
+        : args.reasoningEffort === null
+          ? undefined
+          : parseModelReasoningEffort(args.reasoningEffort);
 
     const existingById = await ctx.db
       .query("models")
@@ -494,7 +500,7 @@ export const updateModel = internalMutation({
       logoId,
       reasoningEffort,
       metricsEpoch:
-        modelId !== existing.modelId || reasoningEffort !== normalizeModelReasoningEffort(existing.reasoningEffort)
+        modelId !== existing.modelId || reasoningEffort !== existingReasoningEffort
           ? currentEpoch + 1
           : currentEpoch,
       enabled: args.enabled,

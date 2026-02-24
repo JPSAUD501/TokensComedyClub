@@ -108,8 +108,9 @@ const convex = new ConvexClient(getConvexUrl());
 const convexApi = api as any;
 const countdownTracker = createVotingCountdownTracker();
 const reasoningEstimator = new ReasoningProgressEstimator({
-  syncBlendMs: 320,
-  maxExtrapolationMs: 1_600,
+  syncBlendMs: 260,
+  maxExtrapolationMs: 900,
+  maxRatePerMs: 2.5,
 });
 let liveUnsubscribe: { unsubscribe: () => void } | null = null;
 let reasoningUnsubscribe: { unsubscribe: () => void } | null = null;
@@ -247,6 +248,7 @@ function setupRealtime() {
           {
             tokens: entry.estimatedReasoningTokens,
             updatedAt: entry.updatedAt,
+            finalized: entry.finalized,
           },
           now,
         );

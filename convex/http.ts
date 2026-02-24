@@ -3,7 +3,7 @@ import { httpAction } from "./_generated/server";
 import { internal } from "./_generated/api";
 import {
   isValidModelReasoningEffort,
-  normalizeModelReasoningEffort,
+  parseModelReasoningEffort,
 } from "../shared/models";
 const convexInternal = internal as any;
 
@@ -117,7 +117,10 @@ async function getModelsWithUsage(ctx: any) {
   return {
     models,
     usageByModel: usage.usageByModel ?? {},
+    usageHourlyByModel: usage.usageHourlyByModel ?? {},
     usageWindowSize: usage.usageWindowSize ?? 50,
+    activeModelsAvgCostPerHourUsd: usage.activeModelsAvgCostPerHourUsd ?? null,
+    activeModelsHourlyShareByModel: usage.activeModelsHourlyShareByModel ?? {},
   };
 }
 
@@ -302,7 +305,7 @@ http.route({
       name?: string;
       color?: string;
       logoId?: string;
-      reasoningEffort?: string;
+      reasoningEffort?: string | null;
       enabled?: boolean;
     };
     if (typeof payload.modelId !== "string" || !payload.modelId.trim()) {
@@ -319,6 +322,7 @@ http.route({
     }
     if (
       payload.reasoningEffort !== undefined &&
+      payload.reasoningEffort !== null &&
       (typeof payload.reasoningEffort !== "string" ||
         !isValidModelReasoningEffort(payload.reasoningEffort.trim().toLowerCase()))
     ) {
@@ -332,9 +336,11 @@ http.route({
         color: payload.color.trim(),
         logoId: payload.logoId.trim(),
         reasoningEffort:
-          typeof payload.reasoningEffort === "string"
-            ? normalizeModelReasoningEffort(payload.reasoningEffort)
-            : undefined,
+          payload.reasoningEffort === null
+            ? null
+            : typeof payload.reasoningEffort === "string"
+              ? parseModelReasoningEffort(payload.reasoningEffort)
+              : undefined,
         enabled: payload.enabled !== false,
       });
     } catch (error) {
@@ -369,7 +375,7 @@ http.route({
       name?: string;
       color?: string;
       logoId?: string;
-      reasoningEffort?: string;
+      reasoningEffort?: string | null;
       enabled?: boolean;
     };
 
@@ -390,6 +396,7 @@ http.route({
     }
     if (
       payload.reasoningEffort !== undefined &&
+      payload.reasoningEffort !== null &&
       (typeof payload.reasoningEffort !== "string" ||
         !isValidModelReasoningEffort(payload.reasoningEffort.trim().toLowerCase()))
     ) {
@@ -407,9 +414,11 @@ http.route({
         color: payload.color.trim(),
         logoId: payload.logoId.trim(),
         reasoningEffort:
-          typeof payload.reasoningEffort === "string"
-            ? normalizeModelReasoningEffort(payload.reasoningEffort)
-            : undefined,
+          payload.reasoningEffort === null
+            ? null
+            : typeof payload.reasoningEffort === "string"
+              ? parseModelReasoningEffort(payload.reasoningEffort)
+              : undefined,
         enabled: payload.enabled,
       });
     } catch (error) {

@@ -12,6 +12,7 @@ export function reasoningProgressKey(
 type ReasoningServerSample = {
   tokens: number;
   updatedAt: number;
+  finalized?: boolean;
 };
 
 type ReasoningTrackState = {
@@ -19,10 +20,12 @@ type ReasoningTrackState = {
   growthPerMs: number;
   correctionPerMs: number;
   correctionRemainingMs: number;
+  sampleIntervalMs: number;
   lastTickAt: number;
   lastSeenAt: number;
   serverTokens: number;
   serverUpdatedAt: number;
+  finalized: boolean;
 };
 
 export class ReasoningProgressEstimator {
@@ -30,15 +33,26 @@ export class ReasoningProgressEstimator {
   private readonly syncBlendMs: number;
   private readonly maxExtrapolationMs: number;
   private readonly maxRatePerMs: number;
+  private readonly minSampleIntervalMs: number;
+  private readonly maxSampleIntervalMs: number;
 
   constructor(options?: {
     syncBlendMs?: number;
     maxExtrapolationMs?: number;
     maxRatePerMs?: number;
+    minSampleIntervalMs?: number;
+    maxSampleIntervalMs?: number;
   }) {
     this.syncBlendMs = options?.syncBlendMs ?? 350;
     this.maxExtrapolationMs = options?.maxExtrapolationMs ?? 1_600;
     this.maxRatePerMs = options?.maxRatePerMs ?? 8;
+    this.minSampleIntervalMs = options?.minSampleIntervalMs ?? 250;
+    this.maxSampleIntervalMs = options?.maxSampleIntervalMs ?? 1_500;
+  }
+
+  private clampSampleInterval(value: number): number {
+    if (!Number.isFinite(value) || value <= 0) return this.syncBlendMs;
+    return Math.max(this.minSampleIntervalMs, Math.min(this.maxSampleIntervalMs, value));
   }
 
   private clampRate(rate: number): number {
@@ -51,7 +65,11 @@ export class ReasoningProgressEstimator {
     const elapsed = now - state.lastTickAt;
     if (!(elapsed > 0)) return;
 
-    const canExtrapolate = now - state.serverUpdatedAt <= this.maxExtrapolationMs;
+    const extrapolationWindowMs = Math.max(
+      this.maxExtrapolationMs,
+      Math.floor(state.sampleIntervalMs * 1.25),
+    );
+    const canExtrapolate = !state.finalized && now - state.serverUpdatedAt <= extrapolationWindowMs;
     const growth = canExtrapolate ? state.growthPerMs * elapsed : 0;
 
     let correction = 0;
@@ -80,26 +98,33 @@ export class ReasoningProgressEstimator {
     if (!existing) {
       this.tracks.set(key, {
         displayTokens: normalizedTokens,
-        growthPerMs: 0,
+        // Primeira estimativa de taxa para evitar "congelar e pular" entre os dois primeiros syncs.
+        growthPerMs: this.clampRate(normalizedTokens / 1_000),
         correctionPerMs: 0,
         correctionRemainingMs: 0,
+        sampleIntervalMs: this.syncBlendMs,
         lastTickAt: now,
         lastSeenAt: now,
         serverTokens: normalizedTokens,
         serverUpdatedAt: normalizedUpdatedAt,
+        finalized: Boolean(sample.finalized),
       });
       return;
     }
 
     this.advanceTrack(existing, now);
 
+    if (sample.finalized) {
+      existing.finalized = true;
+    }
+
     if (normalizedUpdatedAt > existing.serverUpdatedAt) {
       const deltaTokens = Math.max(0, normalizedTokens - existing.serverTokens);
       const deltaMs = normalizedUpdatedAt - existing.serverUpdatedAt;
       if (deltaMs > 0) {
+        existing.sampleIntervalMs = this.clampSampleInterval(deltaMs);
         const sampleRate = this.clampRate(deltaTokens / deltaMs);
-        existing.growthPerMs =
-          existing.growthPerMs <= 0 ? sampleRate : this.clampRate(existing.growthPerMs * 0.35 + sampleRate * 0.65);
+        existing.growthPerMs = sampleRate;
       }
       existing.serverUpdatedAt = normalizedUpdatedAt;
       existing.serverTokens = normalizedTokens;
@@ -113,9 +138,15 @@ export class ReasoningProgressEstimator {
       existing.displayTokens = target;
       existing.correctionPerMs = 0;
       existing.correctionRemainingMs = 0;
+    } else if (existing.finalized) {
+      const blendMs = Math.max(90, Math.floor(this.syncBlendMs * 0.35));
+      existing.correctionRemainingMs = blendMs;
+      existing.correctionPerMs = delta / blendMs;
     } else {
-      existing.correctionRemainingMs = this.syncBlendMs;
-      existing.correctionPerMs = delta / this.syncBlendMs;
+      // Distribui correção ao longo do intervalo real de amostragem para evitar saltos bruscos.
+      const blendMs = this.clampSampleInterval(existing.sampleIntervalMs);
+      existing.correctionRemainingMs = blendMs;
+      existing.correctionPerMs = delta / blendMs;
     }
 
     existing.lastSeenAt = now;

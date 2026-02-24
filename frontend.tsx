@@ -722,8 +722,9 @@ function App() {
   const countdownTrackerRef = React.useRef(createVotingCountdownTracker());
   const reasoningEstimatorRef = React.useRef(
     new ReasoningProgressEstimator({
-      syncBlendMs: 320,
-      maxExtrapolationMs: 1_600,
+      syncBlendMs: 260,
+      maxExtrapolationMs: 900,
+      maxRatePerMs: 2.5,
     }),
   );
   const ghostViewer = React.useMemo(() => isGhostViewer(), []);
@@ -764,6 +765,7 @@ function App() {
         {
           tokens: entry.estimatedReasoningTokens,
           updatedAt: entry.updatedAt,
+          finalized: entry.finalized,
         },
         now,
       );

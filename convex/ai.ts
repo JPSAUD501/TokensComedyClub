@@ -3,7 +3,7 @@
 import { generateText, streamText } from "ai";
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { ALL_PROMPTS } from "../prompts";
-import { normalizeModelReasoningEffort, type Model } from "../shared/models";
+import { parseModelReasoningEffort, type Model } from "../shared/models";
 import {
   MODEL_ATTEMPTS,
   MODEL_CALL_TIMEOUT_MS,
@@ -12,6 +12,9 @@ import {
 
 const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 const GENERATION_RETRY_DELAYS_MS = [400, 800, 1_200, 1_800, 2_500, 3_500, 5_000] as const;
+const DEFAULT_REASONING_CALIBRATION_FACTOR = 0.92;
+const MIN_REASONING_CALIBRATION_FACTOR = 0.45;
+const MAX_REASONING_CALIBRATION_FACTOR = 1.45;
 
 export type DurationSource =
   | "openrouter_latency"
@@ -56,16 +59,30 @@ type OpenRouterGenerationInfo = {
   durationSource: DurationSource;
 };
 
+type ReasoningCallType = "prompt" | "answer";
+type ReasoningCalibrationState = {
+  factor: number;
+  samples: number;
+};
+
 const openrouter = createOpenRouter({
   apiKey: process.env.OPENROUTER_API_KEY,
 });
+const reasoningCalibrationByKey = new Map<string, ReasoningCalibrationState>();
 
 function getModelChat(model: Model) {
-  const effort = normalizeModelReasoningEffort(model.reasoningEffort);
-  if (effort === "none") {
-    return openrouter.chat(model.id);
+  const effort = parseModelReasoningEffort(model.reasoningEffort);
+  if (!effort) {
+    return openrouter.chat(model.id, {
+      usage: {
+        include: true,
+      },
+    });
   }
   return openrouter.chat(model.id, {
+    usage: {
+      include: true,
+    },
     extraBody: {
       reasoning: { effort },
     },
@@ -106,10 +123,111 @@ function pickTokenCount(primary: unknown, fallback: unknown): number {
   return asNonNegativeInt(fallback);
 }
 
-function estimateTokensFromText(delta: string): number {
-  const length = delta.trim().length;
-  if (length <= 0) return 0;
-  return Math.max(1, Math.ceil(length / 4));
+function clampReasoningCalibrationFactor(value: number): number {
+  if (!Number.isFinite(value)) return DEFAULT_REASONING_CALIBRATION_FACTOR;
+  return Math.max(
+    MIN_REASONING_CALIBRATION_FACTOR,
+    Math.min(MAX_REASONING_CALIBRATION_FACTOR, value),
+  );
+}
+
+function getReasoningCalibrationKey(model: Model, callType: ReasoningCallType): string {
+  const effort = parseModelReasoningEffort(model.reasoningEffort) ?? "default";
+  return `${model.id}::${effort}::${callType}`;
+}
+
+function getReasoningCalibrationFactor(key: string): number {
+  return reasoningCalibrationByKey.get(key)?.factor ?? DEFAULT_REASONING_CALIBRATION_FACTOR;
+}
+
+function updateReasoningCalibration(
+  key: string,
+  estimatedRawTokens: number,
+  observedTokens: number,
+) {
+  if (!(estimatedRawTokens > 0) || !(observedTokens > 0)) return;
+  const observedFactor = clampReasoningCalibrationFactor(observedTokens / estimatedRawTokens);
+  const existing = reasoningCalibrationByKey.get(key);
+  if (!existing) {
+    reasoningCalibrationByKey.set(key, {
+      factor: observedFactor,
+      samples: 1,
+    });
+    return;
+  }
+
+  const alpha = existing.samples < 4 ? 0.2 : 0.1;
+  const nextFactor = clampReasoningCalibrationFactor(
+    existing.factor * (1 - alpha) + observedFactor * alpha,
+  );
+  reasoningCalibrationByKey.set(key, {
+    factor: nextFactor,
+    samples: existing.samples + 1,
+  });
+}
+
+function isCjkCodePoint(codePoint: number): boolean {
+  return (
+    (codePoint >= 0x4e00 && codePoint <= 0x9fff) ||
+    (codePoint >= 0x3400 && codePoint <= 0x4dbf) ||
+    (codePoint >= 0x3040 && codePoint <= 0x30ff) ||
+    (codePoint >= 0xac00 && codePoint <= 0xd7af)
+  );
+}
+
+function estimateReasoningTokensFromDelta(delta: string): number {
+  if (!delta) return 0;
+
+  let latin = 0;
+  let digits = 0;
+  let whitespace = 0;
+  let punctuation = 0;
+  let cjk = 0;
+  let other = 0;
+
+  for (const char of delta) {
+    const codePoint = char.codePointAt(0) ?? 0;
+    if (/\s/.test(char)) {
+      whitespace += 1;
+      continue;
+    }
+    if ((codePoint >= 65 && codePoint <= 90) || (codePoint >= 97 && codePoint <= 122)) {
+      latin += 1;
+      continue;
+    }
+    if (codePoint >= 48 && codePoint <= 57) {
+      digits += 1;
+      continue;
+    }
+    if (isCjkCodePoint(codePoint)) {
+      cjk += 1;
+      continue;
+    }
+    if (/[\p{P}\p{S}]/u.test(char)) {
+      punctuation += 1;
+      continue;
+    }
+    other += 1;
+  }
+
+  const estimated =
+    latin / 4.6 +
+    digits / 3.1 +
+    cjk * 1.1 +
+    punctuation * 0.24 +
+    other / 3.5 +
+    Math.min(0.9, whitespace * 0.03);
+
+  if (!Number.isFinite(estimated) || estimated <= 0) {
+    return 0;
+  }
+  return Math.max(0.5, estimated);
+}
+
+function getProviderUsageReasoningTokens(providerMetadata: unknown): number {
+  return asNonNegativeInt(
+    (providerMetadata as any)?.openrouter?.usage?.completionTokensDetails?.reasoningTokens,
+  );
 }
 
 function computeDuration(
@@ -294,13 +412,18 @@ type ReasoningProgressReporter = (
 
 async function generateTextWithReasoningStream(
   model: Model,
+  callType: ReasoningCallType,
   system: string,
   prompt: string,
   onReasoningProgress?: ReasoningProgressReporter,
 ): Promise<TextCallResult> {
   const startedAt = Date.now();
   let estimatedReasoningTokens = 0;
+  let estimatedReasoningTokensRaw = 0;
+  const reasoningCalibrationKey = getReasoningCalibrationKey(model, callType);
+  const reasoningCalibrationFactor = getReasoningCalibrationFactor(reasoningCalibrationKey);
   let lastFlushedTokens = -1;
+  let lastFlushedFinalized = false;
   let lastFlushedAt = 0;
 
   const flushReasoningProgress = async (force = false, finalized = false) => {
@@ -309,9 +432,15 @@ async function generateTextWithReasoningStream(
     if (!force) {
       if (estimatedReasoningTokens === lastFlushedTokens) return;
       if (now - lastFlushedAt < 1_000) return;
+    } else if (
+      estimatedReasoningTokens === lastFlushedTokens &&
+      finalized === lastFlushedFinalized
+    ) {
+      return;
     }
     lastFlushedAt = now;
     lastFlushedTokens = estimatedReasoningTokens;
+    lastFlushedFinalized = finalized;
     await onReasoningProgress(estimatedReasoningTokens, finalized);
   };
 
@@ -323,15 +452,37 @@ async function generateTextWithReasoningStream(
     maxRetries: MODEL_ATTEMPTS - 1,
     onChunk: async ({ chunk }) => {
       if (chunk.type !== "reasoning-delta") return;
-      estimatedReasoningTokens += estimateTokensFromText(chunk.text);
+      estimatedReasoningTokensRaw += estimateReasoningTokensFromDelta(chunk.text);
+      estimatedReasoningTokens = Math.max(
+        estimatedReasoningTokens,
+        Math.floor(estimatedReasoningTokensRaw * reasoningCalibrationFactor),
+      );
       await flushReasoningProgress(false, false);
     },
   });
 
-  const [textRaw, response] = await Promise.all([result.text, result.response]);
+  const responsePromise = Promise.resolve(result.response);
+  const providerMetadataPromise = Promise.resolve(result.providerMetadata).catch(() => undefined);
+  const generationInfoPromise = responsePromise
+    .then((response) =>
+      response.id ? fetchOpenRouterGeneration(response.id) : null,
+    )
+    .catch(() => null);
+  const [textRaw, response, providerMetadata] = await Promise.all([
+    result.text,
+    responsePromise,
+    providerMetadataPromise,
+  ]);
   const finishedAt = Date.now();
   const text = cleanResponse(textRaw);
   const generationId = response.id;
+
+  const providerReasoningTokens = getProviderUsageReasoningTokens(providerMetadata);
+  if (providerReasoningTokens > 0) {
+    estimatedReasoningTokens = Math.max(estimatedReasoningTokens, providerReasoningTokens);
+    await flushReasoningProgress(true, true);
+  }
+
   if (!generationId) {
     await flushReasoningProgress(true, true);
     return {
@@ -340,12 +491,23 @@ async function generateTextWithReasoningStream(
     };
   }
 
-  const info = await fetchOpenRouterGeneration(generationId);
+  const info = await generationInfoPromise;
   const metrics = toMetrics(generationId, info, startedAt, finishedAt);
   if (metrics) {
     estimatedReasoningTokens = Math.max(
       estimatedReasoningTokens,
       metrics.reasoningTokens,
+    );
+    updateReasoningCalibration(
+      reasoningCalibrationKey,
+      estimatedReasoningTokensRaw,
+      metrics.reasoningTokens,
+    );
+  } else if (providerReasoningTokens > 0) {
+    updateReasoningCalibration(
+      reasoningCalibrationKey,
+      estimatedReasoningTokensRaw,
+      providerReasoningTokens,
     );
   }
   await flushReasoningProgress(true, true);
@@ -364,6 +526,7 @@ export async function callGeneratePrompt(
 ): Promise<TextCallResult> {
   const result = await generateTextWithReasoningStream(
     model,
+    "prompt",
     buildPromptSystem(),
     "Gere um unico prompt original de Quiplash. Seja criativo e nao repita padroes comuns.",
     onReasoningProgress,
@@ -383,6 +546,7 @@ export async function callGenerateAnswer(
 ): Promise<TextCallResult> {
   const result = await generateTextWithReasoningStream(
     model,
+    "answer",
     "You are playing Quiplash! You'll be given a fill-in-the-blank prompt. Give the FUNNIEST possible answer. Be creative, edgy, unexpected, and concise. Reply with ONLY your answer - no quotes, no explanation, no preamble. Keep it short (under 12 words).",
     `Fill in the blank: ${prompt}`,
     onReasoningProgress,
