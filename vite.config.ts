@@ -5,10 +5,10 @@ export default defineConfig({
   appType: "spa",
   plugins: [react()],
   server: {
-    allowedHosts: ["tokenscomedyclub.linkai.me", ".linkai.me"],
+    allowedHosts: true,
   },
   preview: {
-    allowedHosts: ["tokenscomedyclub.linkai.me", ".linkai.me"],
+    allowedHosts: true,
   },
   build: {
     rollupOptions: {
