@@ -4,8 +4,11 @@ import react from "@vitejs/plugin-react";
 export default defineConfig({
   appType: "spa",
   plugins: [react()],
+  server: {
+    allowedHosts: ["tokenscomedyclub.linkai.me", ".linkai.me"],
+  },
   preview: {
-    allowedHosts: ["tokenscomedyclub.linkai.me"],
+    allowedHosts: ["tokenscomedyclub.linkai.me", ".linkai.me"],
   },
   build: {
     rollupOptions: {
