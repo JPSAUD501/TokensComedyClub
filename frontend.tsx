@@ -740,18 +740,18 @@ function App() {
   );
   const ghostViewer = React.useMemo(() => isGhostViewer(), []);
 
-  const liveState = useQuery(convexApi.live.getState, {}) as
-    | { data: GameState; totalRounds: number | null; viewerCount: number }
+  const liveGameState = useQuery(convexApi.live.getGameState, {}) as
+    | { data: GameState; totalRounds: number | null }
     | undefined;
-  const liveReasoning = useQuery(convexApi.live.getActiveReasoningProgress, {}) as
-    | { roundId: string | null; entries: ActiveReasoningProgressItem[] }
+  const liveViewerCount = useQuery(convexApi.live.getViewerCount, {}) as
+    | { viewerCount: number }
     | undefined;
   const ensureStarted = useMutation(convexApi.live.ensureStarted);
   const heartbeat = useMutation(convexApi.viewers.heartbeat);
 
-  const state = liveState?.data ?? null;
-  const totalRounds = liveState?.totalRounds ?? null;
-  const viewerCount = liveState?.viewerCount ?? 0;
+  const state = liveGameState?.data ?? null;
+  const totalRounds = liveGameState?.totalRounds ?? null;
+  const viewerCount = liveViewerCount?.viewerCount ?? 0;
   const completedRounds = state?.completedRounds ?? 0;
   const catalogModels = state?.models ?? [];
   useEffect(() => {
@@ -765,6 +765,15 @@ function App() {
   const isGeneratingActive = Boolean(
     state?.active && (state.active.phase === "prompting" || state.active.phase === "answering"),
   );
+  const activeReasoningRoundId = state?.active?._id;
+  const liveReasoning = useQuery(
+    convexApi.live.getActiveReasoningProgress,
+    isGeneratingActive && activeReasoningRoundId
+      ? { roundId: activeReasoningRoundId }
+      : "skip",
+  ) as
+    | { roundId: string | null; entries: ActiveReasoningProgressItem[] }
+    | undefined;
 
   useEffect(() => {
     const estimator = reasoningEstimatorRef.current;
@@ -793,9 +802,20 @@ function App() {
   }, [isGeneratingActive]);
 
   useEffect(() => {
+    void ensureStarted({});
+  }, [ensureStarted]);
+
+  useEffect(() => {
+    if (!state) {
+      return;
+    }
+
+    if (state.isPaused) {
+      return;
+    }
+
     const viewerId = getOrCreateViewerId();
     viewerIdRef.current = viewerId;
-    void ensureStarted({});
 
     if (ghostViewer) {
       return;
@@ -808,9 +828,9 @@ function App() {
     return () => {
       clearInterval(interval);
     };
-  }, [ensureStarted, heartbeat, ghostViewer]);
+  }, [state, heartbeat, ghostViewer]);
 
-  if (!liveState || !state) return <ConnectingScreen />;
+  if (!liveGameState || !state) return <ConnectingScreen />;
 
   reasoningEstimatorRef.current.tick(nowMs);
   const votingCountdown = countdownTrackerRef.current.compute(state.active, nowMs);

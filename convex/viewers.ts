@@ -5,12 +5,12 @@ const convexInternal = internal as any;
 import {
   VIEWER_PRESENCE_REAPER_MAX_LIMIT,
   VIEWER_REAPER_BATCH,
-  VIEWER_REAPER_INTERVAL_MS,
   VIEWER_SESSION_TTL_MS,
   VIEWER_SHARD_COUNT,
   hashToShard,
 } from "./constants";
 import { getEngineState } from "./state";
+import { applyViewerCountDelta } from "./viewerCount";
 
 async function getViewerReaperState(ctx: any) {
   return await ctx.db
@@ -29,7 +29,7 @@ async function getOrCreateViewerReaperState(ctx: any) {
   return await ctx.db.get(id);
 }
 
-async function adjustCountShard(ctx: any, shard: number, delta: number) {
+async function adjustCountShard(ctx: any, shard: number, delta: number): Promise<number> {
   const row = await ctx.db
     .query("viewerCountShards")
     .withIndex("by_shard", (q: any) => q.eq("shard", shard))
@@ -37,19 +37,26 @@ async function adjustCountShard(ctx: any, shard: number, delta: number) {
 
   const now = Date.now();
   if (!row) {
-    if (delta <= 0) return;
+    if (delta <= 0) return 0;
     await ctx.db.insert("viewerCountShards", {
       shard,
       count: delta,
       updatedAt: now,
     });
-    return;
+    return delta;
+  }
+
+  const nextCount = Math.max(0, row.count + delta);
+  const appliedDelta = nextCount - row.count;
+  if (appliedDelta === 0) {
+    return 0;
   }
 
   await ctx.db.patch(row._id, {
-    count: Math.max(0, row.count + delta),
+    count: nextCount,
     updatedAt: now,
   });
+  return appliedDelta;
 }
 
 async function adjustVoteTally(
@@ -87,6 +94,61 @@ async function adjustVoteTally(
   });
 }
 
+async function getEarliestPresenceExpiresAt(ctx: any): Promise<number | null> {
+  const earliest = await ctx.db.query("viewerPresence").withIndex("by_expiresAt").take(1);
+  if (earliest.length === 0) return null;
+  const expiresAt = earliest[0]?.expiresAt;
+  return typeof expiresAt === "number" && Number.isFinite(expiresAt) ? expiresAt : null;
+}
+
+async function scheduleReaperAt(
+  ctx: any,
+  reaperState: any,
+  runAt: number,
+  limit: number,
+) {
+  const now = Date.now();
+  const safeRunAt = Math.max(now, runAt);
+  const currentScheduledAt =
+    typeof reaperState?.scheduledAt === "number" && Number.isFinite(reaperState.scheduledAt)
+      ? reaperState.scheduledAt
+      : null;
+
+  if (
+    currentScheduledAt !== null &&
+    currentScheduledAt > now &&
+    currentScheduledAt <= safeRunAt
+  ) {
+    return;
+  }
+
+  await ctx.scheduler.runAfter(Math.max(0, safeRunAt - now), convexInternal.viewers.reapExpired, { limit });
+  if (reaperState) {
+    await ctx.db.patch(reaperState._id, {
+      scheduledAt: safeRunAt,
+      updatedAt: now,
+    });
+  }
+}
+
+async function scheduleReaperFromPresence(
+  ctx: any,
+  reaperState: any,
+  limit: number,
+) {
+  const earliestExpiresAt = await getEarliestPresenceExpiresAt(ctx);
+  if (earliestExpiresAt === null) {
+    if (reaperState?.scheduledAt !== undefined) {
+      await ctx.db.patch(reaperState._id, {
+        scheduledAt: undefined,
+        updatedAt: Date.now(),
+      });
+    }
+    return;
+  }
+  await scheduleReaperAt(ctx, reaperState, earliestExpiresAt, limit);
+}
+
 export const heartbeat = mutation({
   args: {
     viewerId: v.string(),
@@ -95,6 +157,11 @@ export const heartbeat = mutation({
   returns: v.null(),
   handler: async (ctx, args) => {
     if (args.page === "broadcast") {
+      return null;
+    }
+
+    const engineState = await getEngineState(ctx as any);
+    if (engineState?.isPaused) {
       return null;
     }
 
@@ -116,30 +183,19 @@ export const heartbeat = mutation({
         countShard: shard,
         updatedAt: now,
       });
-      await adjustCountShard(ctx, shard, 1);
+      const appliedDelta = await adjustCountShard(ctx, shard, 1);
+      await applyViewerCountDelta(ctx, { webDelta: appliedDelta });
     } else {
-      const wasExpired = existing.expiresAt <= now;
       await ctx.db.patch(existing._id, {
         page: args.page,
         expiresAt,
         lastSeenAt: now,
         updatedAt: now,
       });
-      if (wasExpired) {
-        await adjustCountShard(ctx, existing.countShard, 1);
-      }
     }
 
     const reaperState = await getOrCreateViewerReaperState(ctx as any);
-    if (reaperState && (!reaperState.scheduledAt || reaperState.scheduledAt <= now)) {
-      await ctx.scheduler.runAfter(0, convexInternal.viewers.reapExpired, {
-        limit: VIEWER_REAPER_BATCH,
-      });
-      await ctx.db.patch(reaperState._id, {
-        scheduledAt: now + VIEWER_REAPER_INTERVAL_MS,
-        updatedAt: now,
-      });
-    }
+    await scheduleReaperFromPresence(ctx, reaperState, VIEWER_REAPER_BATCH);
 
     return null;
   },
@@ -254,24 +310,19 @@ export const reapExpired = internalMutation({
       .take(limit);
 
     let processed = 0;
+    let webDelta = 0;
     for (const session of expired) {
       if (session.expiresAt > now) continue;
-      await adjustCountShard(ctx, session.countShard, -1);
+      const appliedDelta = await adjustCountShard(ctx, session.countShard, -1);
+      webDelta += appliedDelta;
       await ctx.db.delete(session._id);
       processed += 1;
     }
+    await applyViewerCountDelta(ctx, { webDelta });
 
     const reaperState = await getOrCreateViewerReaperState(ctx as any);
-    const delayMs = expired.length === limit ? 0 : VIEWER_REAPER_INTERVAL_MS;
-    await ctx.scheduler.runAfter(delayMs, convexInternal.viewers.reapExpired, { limit });
-    if (reaperState) {
-      await ctx.db.patch(reaperState._id, {
-        scheduledAt: now + delayMs,
-        updatedAt: now,
-      });
-    }
+    await scheduleReaperFromPresence(ctx, reaperState, limit);
 
     return { processed };
   },
 });
-

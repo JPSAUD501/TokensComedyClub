@@ -124,7 +124,9 @@ const reasoningEstimator = new ReasoningProgressEstimator({
   maxRatePerMs: REASONING_ESTIMATOR_MAX_RATE_PER_MS,
 });
 let liveUnsubscribe: { unsubscribe: () => void } | null = null;
+let viewerCountUnsubscribe: { unsubscribe: () => void } | null = null;
 let reasoningUnsubscribe: { unsubscribe: () => void } | null = null;
+let reasoningRoundId: string | null = null;
 let lastEstimatorTickAt = 0;
 
 function syncModelCatalog(models: ModelCatalogEntry[]) {
@@ -232,42 +234,72 @@ function setupRealtime() {
   void convex.mutation(convexApi.live.ensureStarted, {});
 
   liveUnsubscribe?.unsubscribe();
+  viewerCountUnsubscribe?.unsubscribe();
   reasoningUnsubscribe?.unsubscribe();
+  reasoningRoundId = null;
   liveUnsubscribe = convex.onUpdate(
-    convexApi.live.getState,
+    convexApi.live.getGameState,
     {},
-    (payload: { data: GameState; totalRounds: number | null; viewerCount: number }) => {
+    (payload: { data: GameState; totalRounds: number | null }) => {
       connected = true;
       state = payload.data;
       totalRounds = payload.totalRounds;
-      viewerCount = payload.viewerCount;
+
+      const active = payload.data.active;
+      const shouldTrackReasoning = Boolean(
+        active &&
+          active._id &&
+          (active.phase === "prompting" || active.phase === "answering"),
+      );
+      const nextRoundId = shouldTrackReasoning && active?._id ? String(active._id) : null;
+      if (nextRoundId === reasoningRoundId) {
+        return;
+      }
+
+      reasoningRoundId = nextRoundId;
+      reasoningUnsubscribe?.unsubscribe();
+      reasoningUnsubscribe = null;
+      if (!nextRoundId) {
+        return;
+      }
+
+      reasoningUnsubscribe = convex.onUpdate(
+        convexApi.live.getActiveReasoningProgress,
+        { roundId: nextRoundId },
+        (reasoningPayload: LiveReasoningPayload) => {
+          if (!reasoningPayload.roundId) return;
+          const now = Date.now();
+          for (const entry of reasoningPayload.entries) {
+            reasoningEstimator.sync(
+              reasoningProgressKey(reasoningPayload.roundId, entry.requestType, entry.answerIndex),
+              {
+                tokens: entry.estimatedReasoningTokens,
+                updatedAt: entry.updatedAt,
+                finalized: entry.finalized,
+              },
+              now,
+            );
+          }
+          reasoningEstimator.pruneOlderThan(REASONING_ESTIMATOR_PRUNE_OLDER_THAN_MS, now);
+        },
+        () => {
+          // Ignore transient disconnects; estimator resumes on next payload.
+        },
+      );
     },
     () => {
       connected = false;
     },
   );
 
-  reasoningUnsubscribe = convex.onUpdate(
-    convexApi.live.getActiveReasoningProgress,
+  viewerCountUnsubscribe = convex.onUpdate(
+    convexApi.live.getViewerCount,
     {},
-    (payload: LiveReasoningPayload) => {
-      if (!payload.roundId) return;
-      const now = Date.now();
-      for (const entry of payload.entries) {
-        reasoningEstimator.sync(
-          reasoningProgressKey(payload.roundId, entry.requestType, entry.answerIndex),
-          {
-            tokens: entry.estimatedReasoningTokens,
-            updatedAt: entry.updatedAt,
-            finalized: entry.finalized,
-          },
-          now,
-        );
-      }
-      reasoningEstimator.pruneOlderThan(REASONING_ESTIMATOR_PRUNE_OLDER_THAN_MS, now);
+    (payload: { viewerCount: number }) => {
+      viewerCount = payload.viewerCount;
     },
     () => {
-      // Ignore transient disconnects; estimator resumes on next payload.
+      // Ignore transient disconnects.
     },
   );
 }
@@ -1139,6 +1171,7 @@ renderLoop();
 
 window.addEventListener("beforeunload", () => {
   liveUnsubscribe?.unsubscribe();
+  viewerCountUnsubscribe?.unsubscribe();
   reasoningUnsubscribe?.unsubscribe();
   void convex.close();
 });

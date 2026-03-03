@@ -11,7 +11,6 @@ import {
   ENGINE_RUNNER_RETRY_ACTIVE_ROUND_RECOVERED_MS,
   ENGINE_RUNNER_RETRY_BLOCKED_MS,
   ENGINE_RUNNER_RETRY_CREATE_ROUND_FAILED_MS,
-  ENGINE_RUNNER_RETRY_PAUSED_MS,
   ENGINE_RUNNER_VOTE_MODEL_WAIT_MS,
   ENGINE_RUNNER_VOTE_WINDOW_POLL_MAX_MS,
   ENGINE_RUNNER_VOTE_WINDOW_POLL_MIN_MS,
@@ -220,14 +219,12 @@ export const runLoop = internalAction({
         return null;
       }
 
-      if (!(await safeRenewLease(ctx, args.leaseId, expectedGeneration))) {
+      if (state.isPaused) {
+        await ctx.runMutation(convexInternal.engine.clearLease, { leaseId: args.leaseId });
         return null;
       }
 
-      if (state.isPaused) {
-        await ctx.scheduler.runAfter(ENGINE_RUNNER_RETRY_PAUSED_MS, convexInternal.engineRunner.runLoop, {
-          leaseId: args.leaseId,
-        });
+      if (!(await safeRenewLease(ctx, args.leaseId, expectedGeneration))) {
         return null;
       }
 

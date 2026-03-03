@@ -114,7 +114,9 @@ export const AI_REASONING_CALIBRATION_ALPHA_WARMUP = 0.2;
 // Alpha usado na media movel da calibracao apos aquecimento (mais estavel).
 export const AI_REASONING_CALIBRATION_ALPHA_STEADY = 0.1;
 // Intervalo minimo entre flushes de progresso de reasoning para reduzir ruido.
-export const AI_REASONING_PROGRESS_FLUSH_INTERVAL_MS = 1_000;
+export const AI_REASONING_PROGRESS_FLUSH_INTERVAL_MS = 2_500;
+// Delta minimo de tokens estimados para publicar um novo flush de reasoning em tempo real.
+export const AI_REASONING_PROGRESS_FLUSH_MIN_DELTA = 10;
 // Quantidade de prompts de referencia sorteados para compor o system prompt.
 export const AI_PROMPT_EXAMPLE_COUNT = 80;
 // Tamanho minimo aceitavel de texto para prompt gerado.

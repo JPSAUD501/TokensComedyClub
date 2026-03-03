@@ -88,6 +88,15 @@ export async function getEngineState(
   return await ctx.db.query("engineState").withIndex("by_key", (q) => q.eq("key", "main")).first();
 }
 
+export async function getRunnerLeaseState(
+  ctx: EngineReadCtx,
+): Promise<Doc<"runnerLeaseState"> | null> {
+  return await ctx.db
+    .query("runnerLeaseState")
+    .withIndex("by_key", (q) => q.eq("key", "main"))
+    .first();
+}
+
 export async function getOrCreateEngineState(
   ctx: MutationCtx,
 ): Promise<Doc<"engineState">> {
@@ -153,6 +162,22 @@ export async function getOrCreateEngineState(
 
   const created = await ctx.db.get(id);
   if (!created) throw new Error("failed to initialize engine state");
+  return created;
+}
+
+export async function getOrCreateRunnerLeaseState(
+  ctx: MutationCtx,
+): Promise<Doc<"runnerLeaseState">> {
+  const existing = await getRunnerLeaseState(ctx);
+  if (existing) return existing;
+
+  const now = Date.now();
+  const id = await ctx.db.insert("runnerLeaseState", {
+    key: "main",
+    updatedAt: now,
+  });
+  const created = await ctx.db.get(id);
+  if (!created) throw new Error("failed to initialize runner lease state");
   return created;
 }
 

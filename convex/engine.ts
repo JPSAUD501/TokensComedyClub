@@ -12,6 +12,8 @@ import {
   DEFAULT_POST_ROUND_DELAY_ACTIVE_MS,
   getEngineState,
   getOrCreateEngineState,
+  getOrCreateRunnerLeaseState,
+  getRunnerLeaseState,
   isFiniteRuns,
   resolveRuntimeRoundTiming,
 } from "./state";
@@ -161,8 +163,16 @@ export const getRunnerState = internalQuery({
   args: {},
   returns: v.union(v.any(), v.null()),
   handler: async (ctx) => {
-    const state = await getEngineState(ctx as any);
-    return state ?? null;
+    const [state, leaseState] = await Promise.all([
+      getEngineState(ctx as any),
+      getRunnerLeaseState(ctx as any),
+    ]);
+    if (!state) return null;
+    return {
+      ...state,
+      runnerLeaseId: leaseState?.leaseId,
+      runnerLeaseUntil: leaseState?.leaseUntil,
+    };
   },
 });
 
@@ -172,10 +182,29 @@ export const renewLease = internalMutation({
   },
   returns: v.boolean(),
   handler: async (ctx, args) => {
-    const state = await getOrCreateEngineState(ctx as any);
-    if (state.runnerLeaseId !== args.leaseId) return false;
-    await ctx.db.patch(state._id, {
-      runnerLeaseUntil: Date.now() + RUNNER_LEASE_MS,
+    const leaseState = await getOrCreateRunnerLeaseState(ctx as any);
+    if (leaseState.leaseId !== args.leaseId) return false;
+    await ctx.db.patch(leaseState._id, {
+      leaseUntil: Date.now() + RUNNER_LEASE_MS,
+      updatedAt: Date.now(),
+    });
+    return true;
+  },
+});
+
+export const clearLease = internalMutation({
+  args: {
+    leaseId: v.optional(v.string()),
+  },
+  returns: v.boolean(),
+  handler: async (ctx, args) => {
+    const leaseState = await getOrCreateRunnerLeaseState(ctx as any);
+    if (args.leaseId && leaseState.leaseId !== args.leaseId) {
+      return false;
+    }
+    await ctx.db.patch(leaseState._id, {
+      leaseId: undefined,
+      leaseUntil: undefined,
       updatedAt: Date.now(),
     });
     return true;

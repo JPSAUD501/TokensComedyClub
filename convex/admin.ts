@@ -10,6 +10,7 @@ import {
 import {
   getEngineState,
   getOrCreateEngineState,
+  getOrCreateRunnerLeaseState,
   normalizeScoreRecord,
   resolveRuntimeRoundTiming,
 } from "./state";
@@ -20,7 +21,7 @@ import {
   listModelCatalog,
 } from "./models";
 import { toClientRound } from "./rounds";
-import { readTotalViewerCount } from "./viewerCount";
+import { readTotalViewerCount, rebuildViewerCountSummary } from "./viewerCount";
 
 function normalizeViewerTarget(platform: "twitch" | "youtube", target: string): string {
   const trimmed = target.trim();
@@ -214,6 +215,7 @@ export const upsertViewerTarget = internalMutation({
     }
 
     await ctx.scheduler.runAfter(0, convexInternal.platformViewers.ensurePollingStarted, {});
+    await rebuildViewerCountSummary(ctx as any);
 
     return id!;
   },
@@ -229,6 +231,7 @@ export const deleteViewerTarget = internalMutation({
     if (row) {
       await ctx.db.delete(args.id);
     }
+    await rebuildViewerCountSummary(ctx as any);
     return null;
   },
 });
@@ -238,10 +241,53 @@ export const pause = internalMutation({
   returns: v.null(),
   handler: async (ctx) => {
     const state = await getOrCreateEngineState(ctx as any);
+    const leaseState = await getOrCreateRunnerLeaseState(ctx as any);
+    const now = Date.now();
     await ctx.db.patch(state._id, {
       isPaused: true,
-      updatedAt: Date.now(),
+      updatedAt: now,
     });
+
+    await ctx.db.patch(leaseState._id, {
+      leaseId: undefined,
+      leaseUntil: undefined,
+      updatedAt: now,
+    });
+
+    const platformPollingState = await ctx.db
+      .query("platformPollingState")
+      .withIndex("by_key", (q: any) => q.eq("key", "main"))
+      .first();
+    if (platformPollingState) {
+      await ctx.db.patch(platformPollingState._id, {
+        scheduledAt: undefined,
+        updatedAt: now,
+      });
+    }
+
+    const viewerReaperState = await ctx.db
+      .query("viewerReaperState")
+      .withIndex("by_key", (q: any) => q.eq("key", "main"))
+      .first();
+    if (viewerReaperState) {
+      await ctx.db.patch(viewerReaperState._id, {
+        scheduledAt: undefined,
+        updatedAt: now,
+      });
+    }
+
+    const presences = await ctx.db.query("viewerPresence").collect();
+    for (const row of presences) {
+      await ctx.db.delete(row._id);
+    }
+
+    const shards = await ctx.db.query("viewerCountShards").collect();
+    for (const shard of shards) {
+      if (shard.count === 0) continue;
+      await ctx.db.patch(shard._id, { count: 0, updatedAt: now });
+    }
+
+    await rebuildViewerCountSummary(ctx as any);
     return null;
   },
 });
@@ -251,6 +297,7 @@ export const resume = internalMutation({
   returns: v.null(),
   handler: async (ctx) => {
     const state = await getOrCreateEngineState(ctx as any);
+    const leaseState = await getOrCreateRunnerLeaseState(ctx as any);
     await ctx.db.patch(state._id, {
       isPaused: false,
       done: false,
@@ -258,16 +305,18 @@ export const resume = internalMutation({
     });
 
     const now = Date.now();
-    const validLease = Boolean(state.runnerLeaseId && state.runnerLeaseUntil && state.runnerLeaseUntil > now);
+    const validLease = Boolean(leaseState.leaseId && leaseState.leaseUntil && leaseState.leaseUntil > now);
     if (!validLease) {
       const leaseId = crypto.randomUUID();
-      await ctx.db.patch(state._id, {
-        runnerLeaseId: leaseId,
-        runnerLeaseUntil: now + RUNNER_LEASE_MS,
+      await ctx.db.patch(leaseState._id, {
+        leaseId,
+        leaseUntil: now + RUNNER_LEASE_MS,
         updatedAt: now,
       });
       await ctx.scheduler.runAfter(0, convexInternal.engineRunner.runLoop, { leaseId });
     }
+
+    await ctx.scheduler.runAfter(0, convexInternal.platformViewers.ensurePollingStarted, {});
 
     return null;
   },
@@ -294,13 +343,17 @@ export const reset = internalMutation({
       humanScores: { ...DEFAULT_SCORES },
       humanVoteTotals: { ...DEFAULT_SCORES },
       enabledModelIds: getEnabledModelIds(models),
-      runnerLeaseId: undefined,
-      runnerLeaseUntil: undefined,
       projectionBootstrapRunning: false,
       projectionBootstrapRunId: undefined,
       projectionBootstrapStartedAt: undefined,
       projectionBootstrapFinishedAt: undefined,
       projectionBootstrapError: undefined,
+      updatedAt: Date.now(),
+    });
+    const leaseState = await getOrCreateRunnerLeaseState(ctx as any);
+    await ctx.db.patch(leaseState._id, {
+      leaseId: undefined,
+      leaseUntil: undefined,
       updatedAt: Date.now(),
     });
 
@@ -338,6 +391,7 @@ export const reset = internalMutation({
     for (const shard of shards) {
       await ctx.db.patch(shard._id, { count: 0, updatedAt: Date.now() });
     }
+    await rebuildViewerCountSummary(ctx as any);
 
     await ctx.scheduler.runAfter(0, convexInternal.admin.purgeGenerationRoundBatch, {
       generation: oldGeneration,

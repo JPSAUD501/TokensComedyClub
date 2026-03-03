@@ -7,6 +7,8 @@ import {
   TWITCH_API_BATCH_SIZE,
   YOUTUBE_API_BATCH_SIZE,
 } from "./constants";
+import { getEngineState } from "./state";
+import { applyViewerCountDelta } from "./viewerCount";
 
 type Platform = "twitch" | "youtube";
 
@@ -229,21 +231,42 @@ export const applyPollUpdates = internalMutation({
       }),
     ),
   },
-  returns: v.null(),
+  returns: v.object({ changedTargets: v.number() }),
   handler: async (ctx, args) => {
     const now = Date.now();
+    let changedTargets = 0;
+    let platformDelta = 0;
     for (const update of args.updates) {
       const row = await ctx.db.get(update.targetId);
       if (!row) continue;
+
+      const nextViewerCount = Math.max(0, update.viewerCount);
+      const nextIsLive = update.isLive;
+      const nextLastError =
+        typeof update.lastError === "string" && update.lastError.trim().length > 0
+          ? update.lastError
+          : undefined;
+      const prevLiveViewers = row.isLive ? row.viewerCount : 0;
+      const nextLiveViewers = nextIsLive ? nextViewerCount : 0;
+      const hasChanged =
+        row.viewerCount !== nextViewerCount ||
+        row.isLive !== nextIsLive ||
+        (row.lastError ?? undefined) !== nextLastError;
+      if (!hasChanged) continue;
+
       await ctx.db.patch(update.targetId, {
-        viewerCount: Math.max(0, update.viewerCount),
-        isLive: update.isLive,
-        lastError: update.lastError,
+        viewerCount: nextViewerCount,
+        isLive: nextIsLive,
+        lastError: nextLastError,
         lastPolledAt: now,
         updatedAt: now,
       });
+      platformDelta += nextLiveViewers - prevLiveViewers;
+      changedTargets += 1;
     }
-    return null;
+
+    await applyViewerCountDelta(ctx, { platformDelta });
+    return { changedTargets };
   },
 });
 
@@ -254,6 +277,16 @@ export const ensurePollingStarted = internalMutation({
     const now = Date.now();
     const state = await getOrCreatePlatformPollingState(ctx as any);
     if (!state) return null;
+    const engineState = await getEngineState(ctx as any);
+    if (engineState?.isPaused) {
+      if (state.scheduledAt !== undefined) {
+        await ctx.db.patch(state._id, {
+          scheduledAt: undefined,
+          updatedAt: now,
+        });
+      }
+      return null;
+    }
     if (!state.scheduledAt || state.scheduledAt <= now) {
       const interval = getPollIntervalMs();
       await ctx.scheduler.runAfter(0, convexInternal.platformViewers.pollTargets, {});
@@ -274,6 +307,16 @@ export const scheduleNextPoll = internalMutation({
     const interval = getPollIntervalMs();
     const state = await getOrCreatePlatformPollingState(ctx as any);
     if (!state) return null;
+    const engineState = await getEngineState(ctx as any);
+    if (engineState?.isPaused) {
+      if (state.scheduledAt !== undefined) {
+        await ctx.db.patch(state._id, {
+          scheduledAt: undefined,
+          updatedAt: now,
+        });
+      }
+      return null;
+    }
     await ctx.scheduler.runAfter(interval, convexInternal.platformViewers.pollTargets, {});
     await ctx.db.patch(state._id, {
       scheduledAt: now + interval,
@@ -287,7 +330,14 @@ export const pollTargets = internalAction({
   args: {},
   returns: v.null(),
   handler: async (ctx) => {
+    let shouldScheduleNext = true;
     try {
+      const engineState = await ctx.runQuery(convexInternal.engine.getRunnerState, {});
+      if (engineState?.isPaused) {
+        shouldScheduleNext = false;
+        return null;
+      }
+
       const enabled = (await ctx.runQuery(convexInternal.platformViewers.listEnabledTargets, {})) as PollTarget[];
       const twitchTargets = enabled.filter((target) => target.platform === "twitch");
       const youtubeTargets = enabled.filter((target) => target.platform === "youtube");
@@ -299,7 +349,7 @@ export const pollTargets = internalAction({
 
       const updates = [...twitchUpdates, ...youtubeUpdates];
       if (updates.length > 0) {
-        await ctx.runMutation(convexInternal.platformViewers.applyPollUpdates, {
+        const applied = await ctx.runMutation(convexInternal.platformViewers.applyPollUpdates, {
           updates: updates.map((update) => ({
             targetId: update.targetId as any,
             viewerCount: update.viewerCount,
@@ -307,10 +357,14 @@ export const pollTargets = internalAction({
             lastError: update.lastError,
           })),
         });
-        await ctx.runMutation(convexInternal.engine.maybeShortenVotingWindow, {});
+        if ((applied?.changedTargets ?? 0) > 0) {
+          await ctx.runMutation(convexInternal.engine.maybeShortenVotingWindow, {});
+        }
       }
     } finally {
-      await ctx.runMutation(convexInternal.platformViewers.scheduleNextPoll, {});
+      if (shouldScheduleNext) {
+        await ctx.runMutation(convexInternal.platformViewers.scheduleNextPoll, {});
+      }
     }
 
     return null;

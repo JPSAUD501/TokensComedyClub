@@ -1,8 +1,7 @@
 import React from "react";
-import { ConvexProvider, ConvexReactClient, useMutation, usePaginatedQuery, useQuery } from "convex/react";
+import { ConvexProvider, ConvexReactClient, usePaginatedQuery, useQuery } from "convex/react";
 import { api } from "./convex/_generated/api";
 import { getLogoUrlById, normalizeHexColor, type ModelCatalogEntry } from "./shared/models";
-import { FRONTEND_VIEWER_HEARTBEAT_MS, VIEWER_ID_STORAGE_KEY } from "./config";
 import "./history.css";
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -67,20 +66,6 @@ function getConvexUrl(): string {
   const url = env?.VITE_CONVEX_URL;
   if (!url) throw new Error("VITE_CONVEX_URL is not configured");
   return url.replace(/\/$/, "");
-}
-
-function getOrCreateViewerId(): string {
-  const key = VIEWER_ID_STORAGE_KEY;
-  const existing = window.localStorage.getItem(key);
-  if (existing) return existing;
-  const generated = crypto.randomUUID();
-  window.localStorage.setItem(key, generated);
-  return generated;
-}
-
-function isGhostViewer(): boolean {
-  const value = (new URLSearchParams(window.location.search).get("ghost") ?? "").trim().toLowerCase();
-  return value === "1" || value === "true" || value === "yes";
 }
 
 const convex = new ConvexReactClient(getConvexUrl());
@@ -294,8 +279,8 @@ function HistoryCard({ round }: { round: RoundState }) {
 // ── App ─────────────────────────────────────────────────────────────────────
 
 function App() {
-  const liveState = useQuery(convexApi.live.getState, {}) as
-    | { data: { models: ModelCatalogEntry[] } }
+  const modelCatalog = useQuery(convexApi.live.getModelCatalog, {}) as
+    | { models: ModelCatalogEntry[] }
     | undefined;
   const { results, status, loadMore } = usePaginatedQuery(
     convexApi.history.listPaginated,
@@ -304,28 +289,9 @@ function App() {
   );
   const rounds = results as RoundState[];
 
-  const ensureStarted = useMutation(convexApi.live.ensureStarted);
-  const heartbeat = useMutation(convexApi.viewers.heartbeat);
-  const ghostViewer = React.useMemo(() => isGhostViewer(), []);
-
   React.useEffect(() => {
-    syncModelCatalog(liveState?.data.models ?? []);
-  }, [liveState?.data.models]);
-
-  React.useEffect(() => {
-    const viewerId = getOrCreateViewerId();
-    void ensureStarted({});
-
-    if (ghostViewer) {
-      return;
-    }
-
-    void heartbeat({ viewerId, page: "live" });
-    const interval = setInterval(() => {
-      void heartbeat({ viewerId, page: "live" });
-    }, FRONTEND_VIEWER_HEARTBEAT_MS);
-    return () => clearInterval(interval);
-  }, [ensureStarted, heartbeat, ghostViewer]);
+    syncModelCatalog(modelCatalog?.models ?? []);
+  }, [modelCatalog?.models]);
 
   return (
     <div className="app history-page">

@@ -16,6 +16,7 @@ import {
   AI_REASONING_CALIBRATION_MIN_FACTOR,
   AI_REASONING_CALIBRATION_WARMUP_SAMPLE_COUNT,
   AI_REASONING_PROGRESS_FLUSH_INTERVAL_MS,
+  AI_REASONING_PROGRESS_FLUSH_MIN_DELTA,
   MODEL_ATTEMPTS,
   MODEL_CALL_TIMEOUT_MS,
   OPENROUTER_BASE_URL,
@@ -440,6 +441,12 @@ async function generateTextWithReasoningStream(
     const now = Date.now();
     if (!force) {
       if (estimatedReasoningTokens === lastFlushedTokens) return;
+      if (
+        lastFlushedTokens >= 0 &&
+        estimatedReasoningTokens - lastFlushedTokens < AI_REASONING_PROGRESS_FLUSH_MIN_DELTA
+      ) {
+        return;
+      }
       if (now - lastFlushedAt < AI_REASONING_PROGRESS_FLUSH_INTERVAL_MS) return;
     } else if (
       estimatedReasoningTokens === lastFlushedTokens &&

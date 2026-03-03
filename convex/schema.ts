@@ -117,6 +117,13 @@ export default defineSchema({
     telegramLastError: v.optional(v.string()),
   }).index("by_key", ["key"]),
 
+  runnerLeaseState: defineTable({
+    key: v.literal("main"),
+    leaseId: v.optional(v.string()),
+    leaseUntil: v.optional(v.number()),
+    updatedAt: v.number(),
+  }).index("by_key", ["key"]),
+
   rounds: defineTable({
     generation: v.number(),
     num: v.number(),
@@ -296,5 +303,14 @@ export default defineSchema({
   })
     .index("by_generation_round", ["generation", "roundId"])
     .index("by_round_type", ["roundId", "requestType"])
+    .index("by_round_type_answerIndex", ["roundId", "requestType", "answerIndex"])
     .index("by_generation", ["generation"]),
+
+  viewerCountSummary: defineTable({
+    key: v.literal("main"),
+    webViewerCount: v.number(),
+    platformViewerCount: v.number(),
+    totalViewerCount: v.number(),
+    updatedAt: v.number(),
+  }).index("by_key", ["key"]),
 });

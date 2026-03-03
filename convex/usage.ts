@@ -210,16 +210,15 @@ async function upsertProgressImpl(
     finalized?: boolean;
   },
 ) {
-  const rows = await ctx.db
+  const existing = await ctx.db
     .query("liveReasoningProgress")
-    .withIndex("by_round_type", (q: any) => q.eq("roundId", args.roundId).eq("requestType", args.requestType))
-    .collect();
-
-  const existing = rows.find((row: any) =>
-    args.requestType === "prompt"
-      ? row.answerIndex === undefined
-      : row.answerIndex === args.answerIndex,
-  );
+    .withIndex("by_round_type_answerIndex", (q: any) =>
+      q
+        .eq("roundId", args.roundId)
+        .eq("requestType", args.requestType)
+        .eq("answerIndex", args.requestType === "prompt" ? undefined : args.answerIndex),
+    )
+    .first();
 
   const patch = {
     generation: args.generation,
